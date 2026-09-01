@@ -1,0 +1,5 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/PdfTranslator.Api/PdfTranslator.Api.csproj" />
+  </Folder>
+</Solution>
