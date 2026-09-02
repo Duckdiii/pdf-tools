@@ -1,0 +1,21 @@
+## .NET / Visual Studio
+[Bb]in/
+[Oo]bj/
+[Ll]og/
+[Ll]ogs/
+.vs/
+.vscode/
+.idea/
+*.user
+*.userosscache
+*.suo
+*.userprefs
+
+## Environment & Secrets
+.env
+.env.*
+!.env.example
+
+## Application storage / uploads
+src/PdfTranslator.Api/storage/uploads/*
+!src/PdfTranslator.Api/storage/uploads/.gitkeep
