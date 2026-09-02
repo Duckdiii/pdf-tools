@@ -15,14 +15,26 @@ if (string.IsNullOrWhiteSpace(connectionString))
     throw excitingException("Database connection string is missing! Please configure DATABASE_CONNECTION_STRING in .env or appsettings.json.");
 }
 
-// 2. Đăng ký AppDbContext sử dụng PostgreSQL
+// 2. Cấu hình CORS cho phép React Frontend gọi API
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("AllowReactApp", policy =>
+    {
+        policy.WithOrigins("http://localhost:5173", "http://localhost:3000", "http://localhost:4173")
+              .AllowAnyHeader()
+              .AllowAnyMethod()
+              .AllowCredentials();
+    });
+});
+
+// 3. Đăng ký AppDbContext sử dụng PostgreSQL
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseNpgsql(connectionString));
 
-// 3. Đăng ký Controllers
+// 4. Đăng ký Controllers
 builder.Services.AddControllers();
 
-// 4. Cấu hình Swagger / OpenAPI
+// 5. Cấu hình Swagger / OpenAPI
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
@@ -36,6 +48,9 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseHttpsRedirection();
+
+// Kích hoạt CORS trước UseAuthorization
+app.UseCors("AllowReactApp");
 
 app.UseAuthorization();
 

@@ -1,8 +1,8 @@
-## .NET / Visual Studio
-[Bb]in/
-[Oo]bj/
-[Ll]og/
-[Ll]ogs/
+## Backend .NET
+backend/[Bb]in/
+backend/[Oo]bj/
+backend/[Ll]og/
+backend/[Ll]ogs/
 .vs/
 .vscode/
 .idea/
@@ -11,11 +11,27 @@
 *.suo
 *.userprefs
 
-## Environment & Secrets
+## Backend Environment & Secrets
+backend/.env
+backend/.env.*
+!backend/.env.example
 .env
 .env.*
 !.env.example
 
-## Application storage / uploads
+## Backend Uploads Storage
+backend/src/PdfTranslator.Api/storage/uploads/*
+!backend/src/PdfTranslator.Api/storage/uploads/.gitkeep
 src/PdfTranslator.Api/storage/uploads/*
 !src/PdfTranslator.Api/storage/uploads/.gitkeep
+
+## Frontend React / Node
+frontend/node_modules/
+frontend/dist/
+frontend/.env.local
+frontend/.env.*.local
+frontend/npm-debug.log*
+frontend/yarn-debug.log*
+frontend/yarn-error.log*
+node_modules/
+dist/
