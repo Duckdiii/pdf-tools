@@ -1,14 +1,23 @@
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Threading.Tasks;
-
+using System.ComponentModel.DataAnnotations;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using PdfTranslator.Api.Data;
 using PdfTranslator.Api.Models;
 
 namespace PdfTranslator.Api.Controllers;
+
+/// <summary>
+/// Model DTO chứa dữ liệu gửi lên từ Form
+/// </summary>
+public class CreateJobRequest
+{
+    [Required(ErrorMessage = "Vui lòng chọn file PDF.")]
+    public IFormFile File { get; set; } = null!;
+
+    public string TargetLanguage { get; set; } = "vi";
+
+    public string SourceLanguage { get; set; } = "auto";
+}
 
 [ApiController]
 [Route("api/[controller]")]
@@ -17,7 +26,6 @@ public class JobsController : ControllerBase
     private readonly AppDbContext _context;
     private readonly IWebHostEnvironment _environment;
 
-    // Inject AppDbContext (thao tác DB) và IWebHostEnvironment (lấy đường dẫn thư mục)
     public JobsController(AppDbContext context, IWebHostEnvironment environment)
     {
         _context = context;
@@ -27,23 +35,19 @@ public class JobsController : ControllerBase
     /// <summary>
     /// API Upload file PDF và tạo Job dịch mới
     /// </summary>
-    /// <param name="file">File PDF cần dịch</param>
-    /// <param name="targetLanguage">Ngôn ngữ đích (mặc định: vi)</param>
-    /// <param name="sourceLanguage">Ngôn ngữ nguồn (mặc định: auto)</param>
     [HttpPost]
     [Consumes("multipart/form-data")]
-    public async Task<IActionResult> CreateJob(
-        [FromForm] IFormFile? file,
-        [FromForm] string targetLanguage = "vi",
-        [FromForm] string sourceLanguage = "auto")
+    public async Task<IActionResult> CreateJob([FromForm] CreateJobRequest request)
     {
-        // 1. Kiểm tra file có được gửi lên không
+        var file = request.File;
+
+        // 1. Kiểm tra file hợp lệ
         if (file == null || file.Length == 0)
         {
             return BadRequest(new { message = "Vui lòng chọn một file PDF hợp lệ." });
         }
 
-        // 2. Kiểm tra định dạng file (chỉ cho phép .pdf)
+        // 2. Kiểm tra định dạng file (.pdf)
         var extension = Path.GetExtension(file.FileName).ToLowerInvariant();
         if (extension != ".pdf")
         {
@@ -57,13 +61,13 @@ public class JobsController : ControllerBase
             Directory.CreateDirectory(uploadsFolder);
         }
 
-        // 4. Tạo tên file độc nhất (UUID + Tên gốc) để tránh bị ghi đè file khi trùng tên
+        // 4. Tạo tên file duy nhất tránh trùng lặp
         var jobId = Guid.NewGuid();
         var safeFileName = Path.GetFileName(file.FileName);
         var uniqueFileName = $"{jobId}_{safeFileName}";
         var destinationPath = Path.Combine(uploadsFolder, uniqueFileName);
 
-        // 5. Ghi file vật lý xuống ổ cứng
+        // 5. Lưu file vật lý xuống ổ cứng
         using (var stream = new FileStream(destinationPath, FileMode.Create))
         {
             await file.CopyToAsync(stream);
@@ -75,8 +79,8 @@ public class JobsController : ControllerBase
             Id = jobId,
             OriginalFileName = safeFileName,
             StoredFilePath = destinationPath,
-            SourceLanguage = sourceLanguage,
-            TargetLanguage = targetLanguage,
+            SourceLanguage = string.IsNullOrWhiteSpace(request.SourceLanguage) ? "auto" : request.SourceLanguage,
+            TargetLanguage = string.IsNullOrWhiteSpace(request.TargetLanguage) ? "vi" : request.TargetLanguage,
             Status = JobStatus.Pending,
             CreatedAt = DateTime.UtcNow
         };
@@ -84,7 +88,7 @@ public class JobsController : ControllerBase
         _context.TranslationJobs.Add(job);
         await _context.SaveChangesAsync();
 
-        // 7. Trả về thông tin Job và mã JobId cho Client
+        // 7. Trả về thông tin Job cho Client
         return Ok(new
         {
             jobId = job.Id,
