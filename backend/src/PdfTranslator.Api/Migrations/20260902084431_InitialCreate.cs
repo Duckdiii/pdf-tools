@@ -9,7 +9,7 @@ namespace PdfTranslator.Api.Migrations
     public partial class InitialCreate : Migration
     {
         /// <inheritdoc />
-        protected override void Up(MigrationBuilder migrationBuilder)
+        protected override void Up(MigrationBuilder migrationBuilder) // nâng cấp database
         {
             migrationBuilder.CreateTable(
                 name: "TranslationJobs",
@@ -60,7 +60,7 @@ namespace PdfTranslator.Api.Migrations
         }
 
         /// <inheritdoc />
-        protected override void Down(MigrationBuilder migrationBuilder)
+        protected override void Down(MigrationBuilder migrationBuilder)// hoàn tác
         {
             migrationBuilder.DropTable(
                 name: "ContentBlocks");

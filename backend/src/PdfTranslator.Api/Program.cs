@@ -1,7 +1,8 @@
+// Đây là nơi cấu hình toàn bộ ứng dụng từ lúc khởi động đến khi nhận request.
 using Microsoft.EntityFrameworkCore;
 using PdfTranslator.Api.Data;
 
-// 1. Tải biến môi trường từ file .env (tìm ở thư mục hiện tại và các thư mục cha)
+// 1. Tải biến môi trường từ file .env
 DotNetEnv.Env.TraversePath().Load();
 
 var builder = WebApplication.CreateBuilder(args);
@@ -38,8 +39,11 @@ builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
+//-----------------------------------------------------------------------------------------------------------
+
 var app = builder.Build();
 
+//-----------------------------------------------------------------------------------------------------------
 // Cấu hình Middleware
 if (app.Environment.IsDevelopment())
 {
