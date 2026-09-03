@@ -1,8 +1,11 @@
 using System.ComponentModel.DataAnnotations;
+using System.Text.Json;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using PdfTranslator.Api.Data;
+using PdfTranslator.Api.DTOs;
 using PdfTranslator.Api.Models;
+using PdfTranslator.Api.Services;
 
 namespace PdfTranslator.Api.Controllers;
 
@@ -25,11 +28,16 @@ public class JobsController : ControllerBase
 {
     private readonly AppDbContext _context;
     private readonly IWebHostEnvironment _environment;
+    private readonly IPdfExtractorService _pdfExtractor;
 
-    public JobsController(AppDbContext context, IWebHostEnvironment environment)
+    public JobsController(
+        AppDbContext context,
+        IWebHostEnvironment environment,
+        IPdfExtractorService pdfExtractor)
     {
         _context = context;
         _environment = environment;
+        _pdfExtractor = pdfExtractor;
     }
 
     /// <summary>
@@ -127,6 +135,137 @@ public class JobsController : ControllerBase
             job.CreatedAt,
             job.UpdatedAt,
             TotalBlocks = job.ContentBlocks.Count
+        });
+    }
+
+    /// <summary>
+    /// API Bóc tách nội dung PDF kèm Bounding Box, Font và Số trang (Tuần 2)
+    /// </summary>
+    [HttpPost("{id:guid}/extract")]
+    public async Task<IActionResult> ExtractJobContent(Guid id)
+    {
+        var job = await _context.TranslationJobs
+            .Include(j => j.ContentBlocks)
+            .FirstOrDefaultAsync(j => j.Id == id);
+
+        if (job == null)
+        {
+            return NotFound(new { message = $"Không tìm thấy Job với mã ID: {id}" });
+        }
+
+        var filePath = job.StoredFilePath;
+        if (!System.IO.File.Exists(filePath))
+        {
+            var fallback = Path.Combine(_environment.ContentRootPath, "storage", "uploads", Path.GetFileName(filePath));
+            if (System.IO.File.Exists(fallback))
+            {
+                filePath = fallback;
+                job.StoredFilePath = fallback;
+            }
+            else
+            {
+                return BadRequest(new { message = $"File PDF vật lý không tồn tại tại: {job.StoredFilePath}" });
+            }
+        }
+
+        // Cập nhật trạng thái sang Extracting
+        job.Status = JobStatus.Extracting;
+        job.UpdatedAt = DateTime.UtcNow;
+        await _context.SaveChangesAsync();
+
+        try
+        {
+            var extractedBlocks = await _pdfExtractor.ExtractBlocksAsync(filePath);
+
+            // In ra console kiểm tra checkpoint theo đúng yêu cầu Tuần 2
+            Console.WriteLine($"\n==================== CHECKPOINT TUẦN 2: EXTRACT JOB {job.Id} ====================");
+            Console.WriteLine($"Tên file: {job.OriginalFileName} | Tổng số block trích xuất: {extractedBlocks.Count}");
+            foreach (var b in extractedBlocks)
+            {
+                Console.WriteLine($"[Trang {b.PageIndex}][Thứ tự {b.OrderIndex:D2}] \"{b.Text}\"");
+                Console.WriteLine($"   └─ BoundingBox: X={b.BoundingBox.X:F1}, Y={b.BoundingBox.Y:F1}, W={b.BoundingBox.Width:F1}, H={b.BoundingBox.Height:F1} | Font: {b.BoundingBox.FontName} ({b.BoundingBox.FontSize}pt)");
+            }
+            Console.WriteLine("===================================================================================\n");
+
+            // Map kết quả extract vào ContentBlock (blockType = TEXT), lưu DB theo yêu cầu Tuần 2
+            if (job.ContentBlocks.Count > 0)
+            {
+                _context.ContentBlocks.RemoveRange(job.ContentBlocks);
+            }
+
+            foreach (var b in extractedBlocks)
+            {
+                var contentBlock = new ContentBlock
+                {
+                    Id = Guid.NewGuid(),
+                    TranslationJobId = job.Id,
+                    PageIndex = b.PageIndex,
+                    OrderIndex = b.OrderIndex,
+                    OriginalText = b.Text.Replace("\0", string.Empty),
+                    BlockType = b.BlockType,
+                    BoundingBoxJson = JsonSerializer.Serialize(b.BoundingBox).Replace("\0", string.Empty)
+                };
+                _context.ContentBlocks.Add(contentBlock);
+            }
+
+            // Cập nhật thời gian và lưu vào database
+            job.UpdatedAt = DateTime.UtcNow;
+            await _context.SaveChangesAsync();
+
+            return Ok(new
+            {
+                jobId = job.Id,
+                fileName = job.OriginalFileName,
+                status = job.Status.ToString(),
+                totalBlocks = extractedBlocks.Count,
+                blocks = extractedBlocks
+            });
+        }
+        catch (Exception ex)
+        {
+            job.Status = JobStatus.Failed;
+            job.ErrorMessage = ex.Message;
+            job.UpdatedAt = DateTime.UtcNow;
+            await _context.SaveChangesAsync();
+
+            return StatusCode(500, new { message = "Lỗi khi trích xuất nội dung PDF.", error = ex.Message });
+        }
+    }
+
+    /// <summary>
+    /// API Truy vấn danh sách ContentBlocks đã lưu trong Database của một Job
+    /// </summary>
+    [HttpGet("{id:guid}/blocks")]
+    public async Task<IActionResult> GetJobBlocks(Guid id)
+    {
+        var jobExists = await _context.TranslationJobs.AnyAsync(j => j.Id == id);
+        if (!jobExists)
+        {
+            return NotFound(new { message = $"Không tìm thấy Job với mã ID: {id}" });
+        }
+
+        var blocks = await _context.ContentBlocks
+            .Where(b => b.TranslationJobId == id)
+            .OrderBy(b => b.PageIndex)
+            .ThenBy(b => b.OrderIndex)
+            .ToListAsync();
+
+        return Ok(new
+        {
+            jobId = id,
+            totalBlocks = blocks.Count,
+            blocks = blocks.Select(b => new
+            {
+                b.Id,
+                b.PageIndex,
+                b.OrderIndex,
+                b.BlockType,
+                b.OriginalText,
+                b.TranslatedText,
+                BoundingBox = string.IsNullOrEmpty(b.BoundingBoxJson)
+                    ? null
+                    : JsonSerializer.Deserialize<BoundingBoxDto>(b.BoundingBoxJson)
+            })
         });
     }
 }

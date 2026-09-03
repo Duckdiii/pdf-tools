@@ -11,6 +11,8 @@ export function App() {
   const [error, setError] = useState<string | null>(null);
   const [currentJob, setCurrentJob] = useState<CreateJobResponse | null>(null);
   const [jobDetail, setJobDetail] = useState<JobDetailResponse | null>(null);
+  const [extractedBlocks, setExtractedBlocks] = useState<any[]>([]);
+  const [isExtracting, setIsExtracting] = useState(false);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
@@ -57,6 +59,22 @@ export function App() {
       setError(err.response?.data?.message || 'Không thể cập nhật trạng thái.');
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleExtract = async () => {
+    if (!currentJob) return;
+    try {
+      setIsExtracting(true);
+      setError(null);
+      const data = await jobsApi.extractJobContent(currentJob.jobId);
+      setExtractedBlocks(data.blocks || []);
+      const detail = await jobsApi.getJobById(currentJob.jobId);
+      setJobDetail(detail);
+    } catch (err: any) {
+      setError(err.response?.data?.message || 'Lỗi khi trích xuất PDF.');
+    } finally {
+      setIsExtracting(false);
     }
   };
 
@@ -205,6 +223,60 @@ export function App() {
               <p>{currentJob.sourceLanguage} &rarr; {currentJob.targetLanguage}</p>
             </div>
           </div>
+
+          {/* Action: Tuần 2 Extract PDF Content */}
+          <div style={{ marginTop: '1.5rem', display: 'flex', gap: '1rem', alignItems: 'center' }}>
+            <button
+              onClick={handleExtract}
+              disabled={isExtracting}
+              style={{
+                backgroundColor: '#10b981',
+                padding: '0.6rem 1.2rem',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.5rem',
+                fontWeight: 600
+              }}
+            >
+              {isExtracting ? <RefreshCw size={18} className="spin" /> : <FileText size={18} />}
+              {isExtracting ? 'Đang trích xuất với iText7...' : 'Trích xuất Text Block (iText7)'}
+            </button>
+            <span style={{ color: '#94a3b8', fontSize: '0.875rem' }}>
+              {extractedBlocks.length > 0 ? `Đã bóc tách thành công ${extractedBlocks.length} khối văn bản!` : 'Bấm để bóc tách text kèm tọa độ và font.'}
+            </span>
+          </div>
+
+          {/* Render List of Extracted Blocks */}
+          {extractedBlocks.length > 0 && (
+            <div style={{ marginTop: '1.5rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+              <h3 style={{ fontSize: '1.1rem', color: '#f8fafc' }}>
+                Danh sách Text Blocks đã trích xuất:
+              </h3>
+              <div style={{ maxHeight: '350px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                {extractedBlocks.map((b: any, idx: number) => (
+                  <div
+                    key={idx}
+                    style={{
+                      background: '#0f172a',
+                      padding: '0.75rem 1rem',
+                      borderRadius: '6px',
+                      border: '1px solid #334155',
+                      fontSize: '0.9rem'
+                    }}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', color: '#38bdf8', marginBottom: '0.25rem', fontSize: '0.8rem' }}>
+                      <span><strong>Trang {b.pageIndex}</strong> | Khối #{b.orderIndex} ({b.blockType})</span>
+                      <span>Font: <strong>{b.boundingBox?.fontName}</strong> ({b.boundingBox?.fontSize}pt)</span>
+                    </div>
+                    <p style={{ color: '#f1f5f9', fontWeight: 500, margin: '0.25rem 0' }}>"{b.text}"</p>
+                    <div style={{ color: '#64748b', fontSize: '0.75rem', fontFamily: 'monospace' }}>
+                      BoundingBox: X={b.boundingBox?.x}, Y={b.boundingBox?.y}, W={b.boundingBox?.width}, H={b.boundingBox?.height}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>

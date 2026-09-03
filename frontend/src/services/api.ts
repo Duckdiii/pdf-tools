@@ -33,6 +33,14 @@ export const jobsApi = {
     const response = await apiClient.get<JobDetailResponse>(`/jobs/${id}`);
     return response.data;
   },
+
+  /**
+   * Trích xuất các khối văn bản từ file PDF (Tuần 2)
+   */
+  async extractJobContent(id: string): Promise<any> {
+    const response = await apiClient.post(`/jobs/${id}/extract`);
+    return response.data;
+  },
 };
 
 export default apiClient;

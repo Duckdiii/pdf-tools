@@ -20,6 +20,10 @@ public class ContentBlock
     public int OrderIndex { get; set; }
 
     [Required]
+    [MaxLength(50)]
+    public string BlockType { get; set; } = "TEXT";
+
+    [Required]
     public string OriginalText { get; set; } = string.Empty;
 
     public string? TranslatedText { get; set; }

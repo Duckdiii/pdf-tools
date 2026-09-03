@@ -1,6 +1,7 @@
 // Đây là nơi cấu hình toàn bộ ứng dụng từ lúc khởi động đến khi nhận request.
 using Microsoft.EntityFrameworkCore;
 using PdfTranslator.Api.Data;
+using PdfTranslator.Api.Services;
 
 // 1. Tải biến môi trường từ file .env
 DotNetEnv.Env.TraversePath().Load();
@@ -32,7 +33,10 @@ builder.Services.AddCors(options =>
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseNpgsql(connectionString));
 
-// 4. Đăng ký Controllers
+// 4. Đăng ký PDF Extractor Service
+builder.Services.AddScoped<IPdfExtractorService, PdfExtractorService>();
+
+// 5. Đăng ký Controllers
 builder.Services.AddControllers();
 
 // 5. Cấu hình Swagger / OpenAPI

@@ -254,3 +254,16 @@ D:\Data\project\pdf-tools\backend\src\PdfTranslator.Api\obj\Debug\net10.0\refint
 D:\Data\project\pdf-tools\backend\src\PdfTranslator.Api\obj\Debug\net10.0\PdfTranslator.Api.pdb
 D:\Data\project\pdf-tools\backend\src\PdfTranslator.Api\obj\Debug\net10.0\PdfTranslator.Api.genruntimeconfig.cache
 D:\Data\project\pdf-tools\backend\src\PdfTranslator.Api\obj\Debug\net10.0\ref\PdfTranslator.Api.dll
+D:\Data\project\pdf-tools\backend\src\PdfTranslator.Api\bin\Debug\net10.0\itext.barcodes.dll
+D:\Data\project\pdf-tools\backend\src\PdfTranslator.Api\bin\Debug\net10.0\itext.bouncy-castle-connector.dll
+D:\Data\project\pdf-tools\backend\src\PdfTranslator.Api\bin\Debug\net10.0\itext.forms.dll
+D:\Data\project\pdf-tools\backend\src\PdfTranslator.Api\bin\Debug\net10.0\itext.io.dll
+D:\Data\project\pdf-tools\backend\src\PdfTranslator.Api\bin\Debug\net10.0\itext.kernel.dll
+D:\Data\project\pdf-tools\backend\src\PdfTranslator.Api\bin\Debug\net10.0\itext.layout.dll
+D:\Data\project\pdf-tools\backend\src\PdfTranslator.Api\bin\Debug\net10.0\itext.pdfa.dll
+D:\Data\project\pdf-tools\backend\src\PdfTranslator.Api\bin\Debug\net10.0\itext.pdfua.dll
+D:\Data\project\pdf-tools\backend\src\PdfTranslator.Api\bin\Debug\net10.0\itext.sign.dll
+D:\Data\project\pdf-tools\backend\src\PdfTranslator.Api\bin\Debug\net10.0\itext.styledxmlparser.dll
+D:\Data\project\pdf-tools\backend\src\PdfTranslator.Api\bin\Debug\net10.0\itext.svg.dll
+D:\Data\project\pdf-tools\backend\src\PdfTranslator.Api\bin\Debug\net10.0\itext.commons.dll
+D:\Data\project\pdf-tools\backend\src\PdfTranslator.Api\bin\Debug\net10.0\Microsoft.DotNet.PlatformAbstractions.dll
