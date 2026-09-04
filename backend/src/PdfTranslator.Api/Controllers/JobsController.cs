@@ -268,4 +268,62 @@ public class JobsController : ControllerBase
             })
         });
     }
+
+    /// <summary>
+    /// API Xem hoặc Tải file PDF Debug có vẽ khung đỏ bao quanh các Text Block
+    /// </summary>
+    [HttpGet("{id:guid}/debug-pdf")]
+    public async Task<IActionResult> GetDebugPdf(Guid id)
+    {
+        var job = await _context.TranslationJobs
+            .Include(j => j.ContentBlocks)
+            .FirstOrDefaultAsync(j => j.Id == id);
+
+        if (job == null)
+        {
+            return NotFound(new { message = $"Không tìm thấy Job với mã ID: {id}" });
+        }
+
+        var filePath = job.StoredFilePath;
+        if (!System.IO.File.Exists(filePath))
+        {
+            var fallback = Path.Combine(_environment.ContentRootPath, "storage", "uploads", Path.GetFileName(filePath));
+            if (System.IO.File.Exists(fallback))
+            {
+                filePath = fallback;
+                job.StoredFilePath = fallback;
+            }
+            else
+            {
+                return BadRequest(new { message = $"File PDF gốc không tồn tại tại: {job.StoredFilePath}" });
+            }
+        }
+
+        // Lấy danh sách blocks: nếu trong DB đã có thì lấy từ DB, nếu chưa có thì trích xuất ngay
+        List<ExtractedBlockDto> blocksToDraw;
+        if (job.ContentBlocks.Count > 0)
+        {
+            blocksToDraw = job.ContentBlocks.Select(b => new ExtractedBlockDto
+            {
+                PageIndex = b.PageIndex,
+                OrderIndex = b.OrderIndex,
+                Text = b.OriginalText,
+                BlockType = b.BlockType,
+                BoundingBox = string.IsNullOrEmpty(b.BoundingBoxJson)
+                    ? new BoundingBoxDto()
+                    : JsonSerializer.Deserialize<BoundingBoxDto>(b.BoundingBoxJson) ?? new BoundingBoxDto()
+            }).ToList();
+        }
+        else
+        {
+            blocksToDraw = await _pdfExtractor.ExtractBlocksAsync(filePath);
+        }
+
+        // Tạo file debug PDF có khung đỏ
+        var debugPdfPath = await _pdfExtractor.GenerateDebugPdfAsync(filePath, blocksToDraw);
+
+        // Trả về file PDF để trình duyệt mở xem trực tiếp
+        var fileStream = new FileStream(debugPdfPath, FileMode.Open, FileAccess.Read, FileShare.Read);
+        return File(fileStream, "application/pdf", enableRangeProcessing: true);
+    }
 }

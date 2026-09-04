@@ -224,8 +224,8 @@ export function App() {
             </div>
           </div>
 
-          {/* Action: Tuần 2 Extract PDF Content */}
-          <div style={{ marginTop: '1.5rem', display: 'flex', gap: '1rem', alignItems: 'center' }}>
+          {/* Action: Tuần 2 Extract PDF Content & Debug PDF */}
+          <div style={{ marginTop: '1.5rem', display: 'flex', gap: '1rem', alignItems: 'center', flexWrap: 'wrap' }}>
             <button
               onClick={handleExtract}
               disabled={isExtracting}
@@ -241,6 +241,28 @@ export function App() {
               {isExtracting ? <RefreshCw size={18} className="spin" /> : <FileText size={18} />}
               {isExtracting ? 'Đang trích xuất với iText7...' : 'Trích xuất Text Block (iText7)'}
             </button>
+
+            <a
+              href={`http://localhost:5210/api/jobs/${currentJob.jobId}/debug-pdf`}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{
+                backgroundColor: '#ef4444',
+                color: 'white',
+                padding: '0.6rem 1.2rem',
+                borderRadius: '8px',
+                textDecoration: 'none',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '0.5rem',
+                fontWeight: 600,
+                fontSize: '1em'
+              }}
+            >
+              <FileText size={18} />
+              Xem PDF Debug (Khung đỏ)
+            </a>
+
             <span style={{ color: '#94a3b8', fontSize: '0.875rem' }}>
               {extractedBlocks.length > 0 ? `Đã bóc tách thành công ${extractedBlocks.length} khối văn bản!` : 'Bấm để bóc tách text kèm tọa độ và font.'}
             </span>
