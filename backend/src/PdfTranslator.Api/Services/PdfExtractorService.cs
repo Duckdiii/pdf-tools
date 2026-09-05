@@ -409,6 +409,19 @@ public class PdfExtractorService : IPdfExtractorService
                 float width = baseline.GetLength();
 
                 float fontSize = renderInfo.GetFontSize();
+                
+                // Tính chiều cao thị giác thực tế từ AscentLine và DescentLine (User Space Coordinates)
+                var ascent = renderInfo.GetAscentLine();
+                var descent = renderInfo.GetDescentLine();
+                float visualHeight = Math.Abs(ascent.GetStartPoint().Get(1) - descent.GetStartPoint().Get(1));
+
+
+                // Nếu font size bị scale bởi Transformation Matrix (Tm) hoặc unscaled (fontSize = 1)
+                if (fontSize <= 2.5f || (visualHeight > fontSize * 1.3f && visualHeight < 100f))
+                {
+                    fontSize = visualHeight > 0.5f ? (float)Math.Round(visualHeight, 1) : 12f;
+                }
+
                 if (fontSize <= 0.01f)
                 {
                     fontSize = 12f;
@@ -417,7 +430,8 @@ public class PdfExtractorService : IPdfExtractorService
                 // VẤN ĐỀ 1: Căn chỉnh trục Y chuẩn theo Baseline
                 // Đáy chữ nằm dưới baseline khoảng 20% font size, chiều cao bao quát 1.15 lần font size
                 float actualBottomY = baselineY - (fontSize * 0.20f);
-                float actualHeight = fontSize * 1.15f;
+                float actualHeight = Math.Max(visualHeight, fontSize * 1.15f);
+
 
                 var font = renderInfo.GetFont();
                 string fontName = "Unknown";

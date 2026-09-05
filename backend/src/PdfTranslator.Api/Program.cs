@@ -59,8 +59,12 @@ builder.Services.AddHttpClient<ITranslationService, GeminiTranslationService>(cl
     client.Timeout = TimeSpan.FromSeconds(60);
 });
 
-// 6. Đăng ký Controllers
+// 6. Đăng ký PDF Rebuilder Service để xuất file PDF tiếng Việt (Phase 4)
+builder.Services.AddScoped<IPdfRebuilderService, PdfRebuilderService>();
+
+// 7. Đăng ký Controllers
 builder.Services.AddControllers();
+
 
 // 5. Cấu hình Swagger / OpenAPI
 builder.Services.AddEndpointsApiExplorer();

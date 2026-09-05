@@ -30,18 +30,22 @@ public class JobsController : ControllerBase
     private readonly IWebHostEnvironment _environment;
     private readonly IPdfExtractorService _pdfExtractor;
     private readonly ITranslationService _translationService;
+    private readonly IPdfRebuilderService _pdfRebuilder;
 
     public JobsController(
         AppDbContext context,
         IWebHostEnvironment environment,
         IPdfExtractorService pdfExtractor,
-        ITranslationService translationService)
+        ITranslationService translationService,
+        IPdfRebuilderService pdfRebuilder)
     {
         _context = context;
         _environment = environment;
         _pdfExtractor = pdfExtractor;
         _translationService = translationService;
+        _pdfRebuilder = pdfRebuilder;
     }
+
 
     /// <summary>
     /// API Tạo và khởi tạo một Job PDF mẫu tiếng Anh 1 trang để kiểm thử dịch thuật (Phase 3 Checkpoint)
@@ -409,8 +413,106 @@ public class JobsController : ControllerBase
     }
 
     /// <summary>
+    /// API Xem trực tiếp file PDF đã dịch tiếng Việt trên trình duyệt (Phase 4)
+    /// </summary>
+    [HttpGet("{id:guid}/translated-pdf")]
+    public async Task<IActionResult> GetTranslatedPdf(Guid id)
+    {
+        var job = await _context.TranslationJobs
+            .Include(j => j.ContentBlocks)
+            .FirstOrDefaultAsync(j => j.Id == id);
+
+        if (job == null)
+        {
+            return NotFound(new { message = $"Không tìm thấy Job với mã ID: {id}" });
+        }
+
+        var filePath = job.StoredFilePath;
+        if (!System.IO.File.Exists(filePath))
+        {
+            var fallback = Path.Combine(_environment.ContentRootPath, "storage", "uploads", Path.GetFileName(filePath));
+            if (System.IO.File.Exists(fallback))
+            {
+                filePath = fallback;
+                job.StoredFilePath = fallback;
+            }
+            else
+            {
+                return BadRequest(new { message = $"File PDF gốc không tồn tại tại: {job.StoredFilePath}" });
+            }
+        }
+
+        if (job.ContentBlocks == null || job.ContentBlocks.Count == 0)
+        {
+            return BadRequest(new { message = "Job chưa có nội dung bóc tách hoặc bản dịch. Vui lòng bóc tách và dịch trước." });
+        }
+
+        try
+        {
+            var translatedPdfPath = await _pdfRebuilder.GenerateTranslatedPdfAsync(filePath, job.ContentBlocks.ToList());
+
+            var fileStream = new FileStream(translatedPdfPath, FileMode.Open, FileAccess.Read, FileShare.Read);
+            return File(fileStream, "application/pdf", enableRangeProcessing: true);
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, new { message = "Lỗi khi tái tạo file PDF tiếng Việt.", error = ex.Message });
+        }
+    }
+
+    /// <summary>
+    /// API Tải file PDF đã dịch tiếng Việt về máy tính (Phase 4)
+    /// </summary>
+    [HttpGet("{id:guid}/download")]
+    public async Task<IActionResult> DownloadTranslatedPdf(Guid id)
+    {
+        var job = await _context.TranslationJobs
+            .Include(j => j.ContentBlocks)
+            .FirstOrDefaultAsync(j => j.Id == id);
+
+        if (job == null)
+        {
+            return NotFound(new { message = $"Không tìm thấy Job với mã ID: {id}" });
+        }
+
+        var filePath = job.StoredFilePath;
+        if (!System.IO.File.Exists(filePath))
+        {
+            var fallback = Path.Combine(_environment.ContentRootPath, "storage", "uploads", Path.GetFileName(filePath));
+            if (System.IO.File.Exists(fallback))
+            {
+                filePath = fallback;
+                job.StoredFilePath = fallback;
+            }
+            else
+            {
+                return BadRequest(new { message = $"File PDF gốc không tồn tại tại: {job.StoredFilePath}" });
+            }
+        }
+
+        if (job.ContentBlocks == null || job.ContentBlocks.Count == 0)
+        {
+            return BadRequest(new { message = "Job chưa có nội dung bóc tách hoặc bản dịch. Vui lòng bóc tách và dịch trước." });
+        }
+
+        try
+        {
+            var translatedPdfPath = await _pdfRebuilder.GenerateTranslatedPdfAsync(filePath, job.ContentBlocks.ToList());
+
+            var fileStream = new FileStream(translatedPdfPath, FileMode.Open, FileAccess.Read, FileShare.Read);
+            var downloadFileName = $"{Path.GetFileNameWithoutExtension(job.OriginalFileName)}_translated_vi.pdf";
+            return File(fileStream, "application/pdf", downloadFileName, enableRangeProcessing: true);
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, new { message = "Lỗi khi tải file PDF tiếng Việt.", error = ex.Message });
+        }
+    }
+
+    /// <summary>
     /// API Test thử nghiệm dịch vụ dịch thuật (Phase 3)
     /// </summary>
+
     [HttpPost("test-translate")]
     public async Task<IActionResult> TestTranslate([FromBody] TestTranslateRequest request)
     {
@@ -473,10 +575,11 @@ public class JobsController : ControllerBase
     }
 
     /// <summary>
-    /// API Dịch toàn bộ nội dung PDF của một Job theo từng trang (Batch Dictionary Translation)
+    /// API Dịch nội dung PDF của một Job theo từng trang (Batch Dictionary Translation)
+    /// Hỗ trợ tham số fromPage và toPage để chọn khoảng trang cần dịch (mặc định dịch toàn bộ)
     /// </summary>
     [HttpPost("{id:guid}/translate")]
-    public async Task<IActionResult> TranslateJob(Guid id)
+    public async Task<IActionResult> TranslateJob(Guid id, [FromQuery] int? fromPage = null, [FromQuery] int? toPage = null)
     {
         var job = await _context.TranslationJobs
             .Include(j => j.ContentBlocks)
@@ -504,19 +607,31 @@ public class JobsController : ControllerBase
 
         try
         {
-            var pages = textBlocks.GroupBy(b => b.PageIndex).OrderBy(g => g.Key).ToList();
+            var allPages = textBlocks.GroupBy(b => b.PageIndex).OrderBy(g => g.Key).ToList();
+            var pages = allPages
+                .Where(g => (!fromPage.HasValue || g.Key >= fromPage.Value) && (!toPage.HasValue || g.Key <= toPage.Value))
+                .ToList();
+
+            if (pages.Count == 0)
+            {
+                return BadRequest(new { message = $"Không tìm thấy trang nào trong khoảng từ {fromPage} đến {toPage}." });
+            }
+
             int translatedCount = 0;
 
             Console.WriteLine($"\n==================== BẮT ĐẦU DỊCH JOB {job.Id} ====================");
             Console.WriteLine($"Tên file: {job.OriginalFileName} | Ngôn ngữ đích: {job.TargetLanguage}");
-            Console.WriteLine($"Tổng số trang cần dịch: {pages.Count} | Tổng số text block: {textBlocks.Count}");
+            Console.WriteLine($"Tổng số trang dịch đợt này: {pages.Count}/{allPages.Count} | Tổng số text block: {pages.Sum(p => p.Count())}");
 
+            int pageCounter = 0;
             foreach (var pageGroup in pages)
             {
+                pageCounter++;
                 var pageIndex = pageGroup.Key;
                 var pageBlocks = pageGroup.ToList();
 
-                Console.WriteLine($"--> Đang dịch Trang {pageIndex} ({pageBlocks.Count} blocks)...");
+                Console.WriteLine($"--> [{pageCounter}/{pages.Count}] Đang dịch Trang {pageIndex} ({pageBlocks.Count} blocks)...");
+
 
                 // Gom các block trong trang thành Dictionary [ID] -> [OriginalText]
                 var pageDict = new Dictionary<string, string>();
@@ -550,7 +665,14 @@ public class JobsController : ControllerBase
                 job.UpdatedAt = DateTime.UtcNow;
                 await _context.SaveChangesAsync();
                 Console.WriteLine($"   Trang {pageIndex} ({pageBlocks.Count} blocks) đã lưu thành công vào Database.");
+
+                // Khoảng nghỉ nhẹ giữa các trang để chống nghẽn Rate Limit
+                if (pageCounter < pages.Count)
+                {
+                    await Task.Delay(2000);
+                }
             }
+
 
             job.Status = JobStatus.Completed;
             job.UpdatedAt = DateTime.UtcNow;
