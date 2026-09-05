@@ -6,7 +6,24 @@ using PdfTranslator.Api.Services;
 // 1. Tải biến môi trường từ file .env
 DotNetEnv.Env.TraversePath().Load();
 
+var possibleEnvPaths = new[]
+{
+    Path.Combine(Directory.GetCurrentDirectory(), "backend", ".env"),
+    Path.Combine(Directory.GetCurrentDirectory(), ".env"),
+    Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".env"),
+    Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "backend", ".env")
+};
+
+foreach (var envPath in possibleEnvPaths)
+{
+    if (File.Exists(envPath))
+    {
+        DotNetEnv.Env.Load(envPath);
+    }
+}
+
 var builder = WebApplication.CreateBuilder(args);
+builder.Configuration.AddEnvironmentVariables();
 
 // Lấy connection string từ biến môi trường (ưu tiên) hoặc appsettings.json
 var connectionString = Environment.GetEnvironmentVariable("DATABASE_CONNECTION_STRING")
@@ -36,7 +53,13 @@ builder.Services.AddDbContext<AppDbContext>(options =>
 // 4. Đăng ký PDF Extractor Service
 builder.Services.AddScoped<IPdfExtractorService, PdfExtractorService>();
 
-// 5. Đăng ký Controllers
+// 5. Đăng ký Translation Service với HttpClient quản lý kết nối tự động (Phase 3)
+builder.Services.AddHttpClient<ITranslationService, GeminiTranslationService>(client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(60);
+});
+
+// 6. Đăng ký Controllers
 builder.Services.AddControllers();
 
 // 5. Cấu hình Swagger / OpenAPI

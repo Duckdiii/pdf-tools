@@ -29,15 +29,94 @@ public class JobsController : ControllerBase
     private readonly AppDbContext _context;
     private readonly IWebHostEnvironment _environment;
     private readonly IPdfExtractorService _pdfExtractor;
+    private readonly ITranslationService _translationService;
 
     public JobsController(
         AppDbContext context,
         IWebHostEnvironment environment,
-        IPdfExtractorService pdfExtractor)
+        IPdfExtractorService pdfExtractor,
+        ITranslationService translationService)
     {
         _context = context;
         _environment = environment;
         _pdfExtractor = pdfExtractor;
+        _translationService = translationService;
+    }
+
+    /// <summary>
+    /// API Tạo và khởi tạo một Job PDF mẫu tiếng Anh 1 trang để kiểm thử dịch thuật (Phase 3 Checkpoint)
+    /// </summary>
+    [HttpPost("create-sample-en")]
+    public async Task<IActionResult> CreateSampleEnglishJob()
+    {
+        var uploadsFolder = Path.Combine(_environment.ContentRootPath, "storage", "uploads");
+        if (!Directory.Exists(uploadsFolder)) Directory.CreateDirectory(uploadsFolder);
+
+        var jobId = Guid.NewGuid();
+        var fileName = "sample_microservices_en.pdf";
+        var filePath = Path.Combine(uploadsFolder, $"{jobId}_{fileName}");
+
+        // Tạo file PDF 1 trang tiếng Anh bằng iText7
+        using (var writer = new iText.Kernel.Pdf.PdfWriter(filePath))
+        using (var pdf = new iText.Kernel.Pdf.PdfDocument(writer))
+        using (var doc = new iText.Layout.Document(pdf))
+        {
+            doc.Add(new iText.Layout.Element.Paragraph("Microservices Architecture Overview")
+                .SetFontSize(22));
+            doc.Add(new iText.Layout.Element.Paragraph("Microservices are an architectural and organizational approach to software development where software is composed of small independent services.")
+                .SetFontSize(14));
+            doc.Add(new iText.Layout.Element.Paragraph("These services communicate over well-defined application programming interfaces (APIs).")
+                .SetFontSize(14));
+            doc.Add(new iText.Layout.Element.Paragraph("Each service is owned by a small, self-contained team that can deploy independently.")
+                .SetFontSize(14));
+            doc.Add(new iText.Layout.Element.Paragraph("Microservice architectures make applications easier to scale and faster to develop, enabling innovation and accelerating time-to-market for new features.")
+                .SetFontSize(14));
+        }
+
+        var job = new TranslationJob
+        {
+            Id = jobId,
+            OriginalFileName = fileName,
+            StoredFilePath = filePath,
+            SourceLanguage = "en",
+            TargetLanguage = "vi",
+            Status = JobStatus.Pending,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        _context.TranslationJobs.Add(job);
+        await _context.SaveChangesAsync();
+
+        // Bóc tách nội dung ngay
+        var extractedBlocks = await _pdfExtractor.ExtractBlocksAsync(filePath);
+        foreach (var b in extractedBlocks)
+        {
+            var contentBlock = new ContentBlock
+            {
+                Id = Guid.NewGuid(),
+                TranslationJobId = job.Id,
+                PageIndex = b.PageIndex,
+                OrderIndex = b.OrderIndex,
+                OriginalText = b.Text.Replace("\0", string.Empty),
+                BlockType = b.BlockType,
+                BoundingBoxJson = JsonSerializer.Serialize(b.BoundingBox).Replace("\0", string.Empty)
+            };
+            _context.ContentBlocks.Add(contentBlock);
+        }
+
+        job.Status = JobStatus.Extracting;
+        job.UpdatedAt = DateTime.UtcNow;
+        await _context.SaveChangesAsync();
+
+        return Ok(new
+        {
+            jobId = job.Id,
+            fileName = job.OriginalFileName,
+            status = job.Status.ToString(),
+            totalBlocks = extractedBlocks.Count,
+            blocks = extractedBlocks.Select(b => b.Text).ToList(),
+            message = "Tạo và bóc tách file PDF mẫu tiếng Anh thành công!"
+        });
     }
 
     /// <summary>
@@ -46,6 +125,7 @@ public class JobsController : ControllerBase
     [HttpPost]
     [Consumes("multipart/form-data")]
     public async Task<IActionResult> CreateJob([FromForm] CreateJobRequest request)
+
     {
         var file = request.File;
 
@@ -262,6 +342,7 @@ public class JobsController : ControllerBase
                 b.BlockType,
                 b.OriginalText,
                 b.TranslatedText,
+                TranslatedContent = b.TranslatedText,
                 BoundingBox = string.IsNullOrEmpty(b.BoundingBoxJson)
                     ? null
                     : JsonSerializer.Deserialize<BoundingBoxDto>(b.BoundingBoxJson)
@@ -326,4 +407,238 @@ public class JobsController : ControllerBase
         var fileStream = new FileStream(debugPdfPath, FileMode.Open, FileAccess.Read, FileShare.Read);
         return File(fileStream, "application/pdf", enableRangeProcessing: true);
     }
+
+    /// <summary>
+    /// API Test thử nghiệm dịch vụ dịch thuật (Phase 3)
+    /// </summary>
+    [HttpPost("test-translate")]
+    public async Task<IActionResult> TestTranslate([FromBody] TestTranslateRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.Text))
+        {
+            return BadRequest(new { message = "Vui lòng cung cấp đoạn văn bản cần dịch." });
+        }
+
+        try
+        {
+            var translated = await _translationService.TranslateTextAsync(
+                request.Text,
+                request.TargetLanguage ?? "vi",
+                request.SourceLanguage ?? "auto");
+
+            return Ok(new
+            {
+                originalText = request.Text,
+                sourceLanguage = request.SourceLanguage ?? "auto",
+                targetLanguage = request.TargetLanguage ?? "vi",
+                translatedText = translated
+            });
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, new { message = "Lỗi khi gọi dịch vụ dịch thuật.", error = ex.Message });
+        }
+    }
+
+    /// <summary>
+    /// API Test thử nghiệm dịch vụ Dictionary Batch Translation (Phase 3)
+    /// </summary>
+    [HttpPost("test-translate-batch")]
+    public async Task<IActionResult> TestTranslateBatch([FromBody] TestTranslateBatchRequest request)
+    {
+        if (request.Items == null || request.Items.Count == 0)
+        {
+            return BadRequest(new { message = "Vui lòng cung cấp danh sách items cần dịch." });
+        }
+
+        try
+        {
+            var translated = await _translationService.TranslateDictionaryAsync(
+                request.Items,
+                request.TargetLanguage ?? "vi",
+                request.SourceLanguage ?? "auto");
+
+            return Ok(new
+            {
+                targetLanguage = request.TargetLanguage ?? "vi",
+                sourceLanguage = request.SourceLanguage ?? "auto",
+                totalItems = request.Items.Count,
+                translatedItems = translated
+            });
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, new { message = "Lỗi khi gọi dịch vụ dịch thuật batch.", error = ex.Message });
+        }
+    }
+
+    /// <summary>
+    /// API Dịch toàn bộ nội dung PDF của một Job theo từng trang (Batch Dictionary Translation)
+    /// </summary>
+    [HttpPost("{id:guid}/translate")]
+    public async Task<IActionResult> TranslateJob(Guid id)
+    {
+        var job = await _context.TranslationJobs
+            .Include(j => j.ContentBlocks)
+            .FirstOrDefaultAsync(j => j.Id == id);
+
+        if (job == null)
+        {
+            return NotFound(new { message = $"Không tìm thấy Job với mã ID: {id}" });
+        }
+
+        var textBlocks = job.ContentBlocks
+            .Where(b => b.BlockType == "TEXT" && !string.IsNullOrWhiteSpace(b.OriginalText))
+            .OrderBy(b => b.PageIndex)
+            .ThenBy(b => b.OrderIndex)
+            .ToList();
+
+        if (textBlocks.Count == 0)
+        {
+            return BadRequest(new { message = "Job chưa có khối văn bản nào được bóc tách. Vui lòng gọi API /extract trước." });
+        }
+
+        job.Status = JobStatus.Translating;
+        job.UpdatedAt = DateTime.UtcNow;
+        await _context.SaveChangesAsync();
+
+        try
+        {
+            var pages = textBlocks.GroupBy(b => b.PageIndex).OrderBy(g => g.Key).ToList();
+            int translatedCount = 0;
+
+            Console.WriteLine($"\n==================== BẮT ĐẦU DỊCH JOB {job.Id} ====================");
+            Console.WriteLine($"Tên file: {job.OriginalFileName} | Ngôn ngữ đích: {job.TargetLanguage}");
+            Console.WriteLine($"Tổng số trang cần dịch: {pages.Count} | Tổng số text block: {textBlocks.Count}");
+
+            foreach (var pageGroup in pages)
+            {
+                var pageIndex = pageGroup.Key;
+                var pageBlocks = pageGroup.ToList();
+
+                Console.WriteLine($"--> Đang dịch Trang {pageIndex} ({pageBlocks.Count} blocks)...");
+
+                // Gom các block trong trang thành Dictionary [ID] -> [OriginalText]
+                var pageDict = new Dictionary<string, string>();
+                foreach (var b in pageBlocks)
+                {
+                    pageDict[b.Id.ToString()] = b.OriginalText;
+                }
+
+                // Gửi 1 request duy nhất cho cả trang
+                var translatedDict = await _translationService.TranslateDictionaryAsync(
+                    pageDict,
+                    job.TargetLanguage,
+                    job.SourceLanguage);
+
+                // Cập nhật bản dịch ngược lại vào từng block
+                foreach (var b in pageBlocks)
+                {
+                    var key = b.Id.ToString();
+                    if (translatedDict.TryGetValue(key, out var translated) && !string.IsNullOrWhiteSpace(translated))
+                    {
+                        b.TranslatedText = translated;
+                    }
+                    else
+                    {
+                        b.TranslatedText = b.OriginalText; // Fallback nếu thiếu
+                    }
+                    translatedCount++;
+                }
+
+                // Lưu lũy tiến ngay sau khi dịch xong mỗi trang vào Database
+                job.UpdatedAt = DateTime.UtcNow;
+                await _context.SaveChangesAsync();
+                Console.WriteLine($"   Trang {pageIndex} ({pageBlocks.Count} blocks) đã lưu thành công vào Database.");
+            }
+
+            job.Status = JobStatus.Completed;
+            job.UpdatedAt = DateTime.UtcNow;
+            await _context.SaveChangesAsync();
+
+            Console.WriteLine($" Hoàn thành dịch Job {job.Id}: {translatedCount}/{textBlocks.Count} blocks đã lưu vào Database.");
+            Console.WriteLine("======================================================================\n");
+
+            return Ok(new
+            {
+                jobId = job.Id,
+                status = job.Status.ToString(),
+                totalPages = pages.Count,
+                totalTranslatedBlocks = translatedCount,
+                message = "Dịch thành công toàn bộ tài liệu PDF và đã lưu vào cơ sở dữ liệu."
+            });
+        }
+        catch (Exception ex)
+        {
+            job.Status = JobStatus.Failed;
+            job.ErrorMessage = ex.Message;
+            job.UpdatedAt = DateTime.UtcNow;
+            await _context.SaveChangesAsync();
+
+            return StatusCode(500, new { message = "Lỗi trong quá trình dịch thuật.", error = ex.Message });
+        }
+    }
+
+    /// <summary>
+    /// API Chỉnh sửa thủ công bản dịch của một ContentBlock cụ thể (Lưu translatedContent vào DB)
+    /// </summary>
+    [HttpPut("{id:guid}/blocks/{blockId:guid}")]
+    public async Task<IActionResult> UpdateBlockTranslation(Guid id, Guid blockId, [FromBody] UpdateBlockTranslationRequest request)
+    {
+        var block = await _context.ContentBlocks
+            .FirstOrDefaultAsync(b => b.Id == blockId && b.TranslationJobId == id);
+
+        if (block == null)
+        {
+            return NotFound(new { message = $"Không tìm thấy Block {blockId} trong Job {id}." });
+        }
+
+        var newContent = request.TranslatedContent ?? request.TranslatedText;
+        if (newContent != null)
+        {
+            block.TranslatedText = newContent;
+        }
+
+        var job = await _context.TranslationJobs.FirstOrDefaultAsync(j => j.Id == id);
+        if (job != null)
+        {
+            job.UpdatedAt = DateTime.UtcNow;
+        }
+
+        await _context.SaveChangesAsync();
+
+        return Ok(new
+        {
+            blockId = block.Id,
+            jobId = block.TranslationJobId,
+            pageIndex = block.PageIndex,
+            orderIndex = block.OrderIndex,
+            originalText = block.OriginalText,
+            translatedText = block.TranslatedText,
+            translatedContent = block.TranslatedText,
+            message = "Cập nhật bản dịch cho block thành công và đã lưu vào cơ sở dữ liệu."
+        });
+    }
+}
+
+public class TestTranslateRequest
+{
+    [Required]
+    public string Text { get; set; } = string.Empty;
+    public string? TargetLanguage { get; set; } = "vi";
+    public string? SourceLanguage { get; set; } = "auto";
+}
+
+public class TestTranslateBatchRequest
+{
+    [Required]
+    public Dictionary<string, string> Items { get; set; } = new();
+    public string? TargetLanguage { get; set; } = "vi";
+    public string? SourceLanguage { get; set; } = "auto";
+}
+
+public class UpdateBlockTranslationRequest
+{
+    public string? TranslatedContent { get; set; }
+    public string? TranslatedText { get; set; }
 }
