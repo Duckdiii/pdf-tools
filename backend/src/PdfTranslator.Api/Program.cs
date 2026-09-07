@@ -1,4 +1,5 @@
-// Đây là nơi cấu hình toàn bộ ứng dụng từ lúc khởi động đến khi nhận request.
+using Hangfire;
+using Hangfire.PostgreSql;
 using Microsoft.EntityFrameworkCore;
 using PdfTranslator.Api.Data;
 using PdfTranslator.Api.Services;
@@ -8,10 +9,11 @@ DotNetEnv.Env.TraversePath().Load();
 
 var possibleEnvPaths = new[]
 {
-    Path.Combine(Directory.GetCurrentDirectory(), "backend", ".env"),
     Path.Combine(Directory.GetCurrentDirectory(), ".env"),
+    Path.Combine(Directory.GetCurrentDirectory(), "..", ".env"),
+    Path.Combine(Directory.GetCurrentDirectory(), "backend", ".env"),
     Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".env"),
-    Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "backend", ".env")
+    Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", ".env")
 };
 
 foreach (var envPath in possibleEnvPaths)
@@ -19,6 +21,8 @@ foreach (var envPath in possibleEnvPaths)
     if (File.Exists(envPath))
     {
         DotNetEnv.Env.Load(envPath);
+        Console.WriteLine($"[Config] Loaded environment variables from: {Path.GetFullPath(envPath)}");
+        break;
     }
 }
 
@@ -62,11 +66,26 @@ builder.Services.AddHttpClient<ITranslationService, GeminiTranslationService>(cl
 // 6. Đăng ký PDF Rebuilder Service để xuất file PDF tiếng Việt (Phase 4)
 builder.Services.AddScoped<IPdfRebuilderService, PdfRebuilderService>();
 
-// 7. Đăng ký Controllers
+// 7. Đăng ký Hangfire Background Job với PostgreSQL Storage
+builder.Services.AddHangfire(configuration => configuration
+    .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
+    .UseSimpleAssemblyNameTypeSerializer()
+    .UseRecommendedSerializerSettings()
+    .UsePostgreSqlStorage(c => c.UseNpgsqlConnection(connectionString)));
+
+builder.Services.AddHangfireServer(options =>
+{
+    // Cấu hình 4 workers để tránh vượt quá connection limit (pool_size 15) của Supabase Session Pooler
+    options.WorkerCount = 4;
+});
+
+// 8. Đăng ký Translation Pipeline Service xử lý ngầm
+builder.Services.AddScoped<ITranslationPipelineService, TranslationPipelineService>();
+
+// 9. Đăng ký Controllers
 builder.Services.AddControllers();
 
-
-// 5. Cấu hình Swagger / OpenAPI
+// 10. Cấu hình Swagger / OpenAPI
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
@@ -86,6 +105,9 @@ app.UseHttpsRedirection();
 
 // Kích hoạt CORS trước UseAuthorization
 app.UseCors("AllowReactApp");
+
+// Kích hoạt Hangfire Dashboard (Truy cập tại /hangfire)
+app.UseHangfireDashboard("/hangfire");
 
 app.UseAuthorization();
 

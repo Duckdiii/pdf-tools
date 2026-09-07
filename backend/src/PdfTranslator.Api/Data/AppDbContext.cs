@@ -11,6 +11,7 @@ public class AppDbContext : DbContext
 
     public DbSet<TranslationJob> TranslationJobs => Set<TranslationJob>();
     public DbSet<ContentBlock> ContentBlocks => Set<ContentBlock>();
+    public DbSet<JobStatusHistory> JobStatusHistories => Set<JobStatusHistory>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -27,5 +28,20 @@ public class AppDbContext : DbContext
             .WithMany(j => j.ContentBlocks)
             .HasForeignKey(c => c.TranslationJobId)
             .OnDelete(DeleteBehavior.Cascade);
+
+        // Cấu hình JobStatusHistory
+        modelBuilder.Entity<JobStatusHistory>(entity =>
+        {
+            entity.Property(h => h.FromStatus)
+                .HasConversion<string>();
+
+            entity.Property(h => h.ToStatus)
+                .HasConversion<string>();
+
+            entity.HasOne(h => h.TranslationJob)
+                .WithMany(j => j.StatusHistories)
+                .HasForeignKey(h => h.TranslationJobId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
     }
 }

@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { CreateJobResponse, JobDetailResponse } from '../types/job.types';
+import { CreateJobResponse, JobDetailResponse, JobStatusResponse } from '../types/job.types';
 
 // Sử dụng proxy /api (hoặc BASE_URL từ biến môi trường)
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api';
@@ -31,6 +31,14 @@ export const jobsApi = {
    */
   async getJobById(id: string): Promise<JobDetailResponse> {
     const response = await apiClient.get<JobDetailResponse>(`/jobs/${id}`);
+    return response.data;
+  },
+
+  /**
+   * Lấy trạng thái tiến độ và lịch sử xử lý ngầm của Job (Background Job)
+   */
+  async getJobStatus(id: string): Promise<JobStatusResponse> {
+    const response = await apiClient.get<JobStatusResponse>(`/jobs/${id}/status`);
     return response.data;
   },
 

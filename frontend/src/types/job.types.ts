@@ -14,6 +14,7 @@ export interface CreateJobResponse {
   status: JobStatus;
   createdAt: string;
   message: string;
+  statusUrl?: string;
 }
 
 export interface JobDetailResponse {
@@ -26,4 +27,26 @@ export interface JobDetailResponse {
   createdAt: string;
   updatedAt?: string | null;
   totalBlocks: number;
+}
+
+export interface JobStatusHistoryItem {
+  id: string;
+  fromStatus: string | null;
+  toStatus: string;
+  changedAt: string;
+  message: string;
+}
+
+export interface JobStatusResponse {
+  jobId: string;
+  fileName: string;
+  status: JobStatus;
+  progressPercent: number;
+  currentStep: string;
+  totalBlocks: number;
+  translatedBlocks: number;
+  errorMessage?: string | null;
+  createdAt: string;
+  updatedAt?: string | null;
+  history: JobStatusHistoryItem[];
 }

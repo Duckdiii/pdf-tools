@@ -31,4 +31,7 @@ public class TranslationJob
 
     // Navigation property: 1 TranslationJob có nhiều ContentBlock
     public ICollection<ContentBlock> ContentBlocks { get; set; } = new List<ContentBlock>();
+
+    // Navigation property: 1 TranslationJob có nhiều JobStatusHistory
+    public ICollection<JobStatusHistory> StatusHistories { get; set; } = new List<JobStatusHistory>();
 }

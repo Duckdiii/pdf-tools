@@ -1,5 +1,6 @@
 using System.ComponentModel.DataAnnotations;
 using System.Text.Json;
+using Hangfire;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using PdfTranslator.Api.Data;
@@ -178,10 +179,26 @@ public class JobsController : ControllerBase
         };
 
         _context.TranslationJobs.Add(job);
+
+        // Ghi nhận lịch sử trạng thái khởi tạo ban đầu
+        _context.JobStatusHistories.Add(new JobStatusHistory
+        {
+            Id = Guid.NewGuid(),
+            TranslationJobId = job.Id,
+            FromStatus = null,
+            ToStatus = JobStatus.Pending,
+            ChangedAt = DateTime.UtcNow,
+            Message = "File PDF đã được tải lên và đưa vào hàng đợi xử lý ngầm."
+        });
+
         await _context.SaveChangesAsync();
 
-        // 7. Trả về thông tin Job cho Client
-        return Ok(new
+        // Đẩy toàn bộ quy trình pipeline (Extract -> Translate -> Rebuild) vào Hangfire Background Job
+        BackgroundJob.Enqueue<ITranslationPipelineService>(svc =>
+            svc.ProcessJobPipelineAsync(job.Id, CancellationToken.None));
+
+        // 7. Trả về thông tin Job cho Client ngay lập tức (< 0.5s)
+        return Accepted(new
         {
             jobId = job.Id,
             fileName = job.OriginalFileName,
@@ -189,7 +206,8 @@ public class JobsController : ControllerBase
             targetLanguage = job.TargetLanguage,
             status = job.Status.ToString(),
             createdAt = job.CreatedAt,
-            message = "Tải lên file thành công. Job đang ở trạng thái chờ xử lý."
+            message = "Tải file lên thành công. Pipeline xử lý ngầm (Extract -> Translate -> Rebuild) đã được kích hoạt!",
+            statusUrl = $"/api/jobs/{job.Id}/status"
         });
     }
 
@@ -219,6 +237,86 @@ public class JobsController : ControllerBase
             job.CreatedAt,
             job.UpdatedAt,
             TotalBlocks = job.ContentBlocks.Count
+        });
+    }
+
+    /// <summary>
+    /// API Polling tra cứu trạng thái tiến độ và lịch sử xử lý ngầm của Job (Background Job)
+    /// </summary>
+    [HttpGet("{id:guid}/status")]
+    public async Task<IActionResult> GetJobStatus(Guid id)
+    {
+        var job = await _context.TranslationJobs
+            .Include(j => j.ContentBlocks)
+            .Include(j => j.StatusHistories)
+            .FirstOrDefaultAsync(j => j.Id == id);
+
+        if (job == null)
+        {
+            return NotFound(new { message = $"Không tìm thấy Job với mã ID: {id}" });
+        }
+
+        var totalBlocks = job.ContentBlocks.Count;
+        var translatedBlocks = job.ContentBlocks.Count(b => !string.IsNullOrWhiteSpace(b.TranslatedText));
+
+        // Tính toán phần trăm tiến độ
+        int progressPercent = 0;
+        switch (job.Status)
+        {
+            case JobStatus.Pending:
+                progressPercent = 5;
+                break;
+            case JobStatus.Extracting:
+                progressPercent = totalBlocks > 0 ? 25 : 15;
+                break;
+            case JobStatus.Translating:
+                if (totalBlocks > 0)
+                {
+                    progressPercent = 30 + (int)((translatedBlocks / (float)totalBlocks) * 50);
+                }
+                else
+                {
+                    progressPercent = 40;
+                }
+                break;
+            case JobStatus.Rebuilding:
+                progressPercent = 85;
+                break;
+            case JobStatus.Completed:
+                progressPercent = 100;
+                break;
+            case JobStatus.Failed:
+                progressPercent = 0;
+                break;
+        }
+
+        var histories = job.StatusHistories
+            .OrderBy(h => h.ChangedAt)
+            .Select(h => new
+            {
+                h.Id,
+                fromStatus = h.FromStatus?.ToString(),
+                toStatus = h.ToStatus.ToString(),
+                h.ChangedAt,
+                h.Message
+            })
+            .ToList();
+
+        var latestHistory = histories.LastOrDefault();
+
+        return Ok(new
+        {
+            jobId = job.Id,
+            fileName = job.OriginalFileName,
+            status = job.Status.ToString(),
+            progressPercent,
+            currentStep = latestHistory?.Message ?? $"Đang ở trạng thái {job.Status}",
+            totalBlocks,
+            translatedBlocks,
+            job.ErrorMessage,
+            job.CreatedAt,
+            job.UpdatedAt,
+            history = histories
         });
     }
 

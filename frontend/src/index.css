@@ -100,7 +100,45 @@ button:disabled {
   color: #991b1b;
 }
 
-.status-processing {
-  background: #bfdbfe;
-  color: #1e40af;
+.status-extracting {
+  background: #fde68a;
+  color: #92400e;
+}
+
+.status-translating {
+  background: #ddd6fe;
+  color: #5b21b6;
+}
+
+.status-rebuilding {
+  background: #bae6fd;
+  color: #0369a1;
+}
+
+.spin {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.progress-container {
+  width: 100%;
+  background-color: #334155;
+  border-radius: 9999px;
+  overflow: hidden;
+  height: 12px;
+}
+
+.progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #38bdf8 0%, #818cf8 50%, #10b981 100%);
+  border-radius: 9999px;
+  transition: width 0.4s ease-in-out;
 }

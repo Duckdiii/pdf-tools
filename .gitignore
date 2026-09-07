@@ -1,6 +1,6 @@
 ## Backend .NET
-backend/[Bb]in/
-backend/[Oo]bj/
+**/[Bb]in/
+**/[Oo]bj/
 backend/[Ll]og/
 backend/[Ll]ogs/
 .vs/
