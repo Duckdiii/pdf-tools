@@ -56,7 +56,7 @@ builder.Services.AddScoped<IPdfExtractorService, PdfExtractorService>();
 // 5. Đăng ký Translation Service với HttpClient quản lý kết nối tự động (Phase 3)
 builder.Services.AddHttpClient<ITranslationService, GeminiTranslationService>(client =>
 {
-    client.Timeout = TimeSpan.FromSeconds(60);
+    client.Timeout = TimeSpan.FromMinutes(5);
 });
 
 // 6. Đăng ký PDF Rebuilder Service để xuất file PDF tiếng Việt (Phase 4)

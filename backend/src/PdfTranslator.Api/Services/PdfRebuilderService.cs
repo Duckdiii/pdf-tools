@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using iText.IO.Font;
 using iText.IO.Font.Constants;
 using iText.Kernel.Colors;
@@ -91,10 +92,11 @@ public class PdfRebuilderService : IPdfRebuilderService
                     float fontSize = box.FontSize > 2.5f ? box.FontSize : 14f;
 
                     // 1. CHE VĂN BẢN CŨ BẰNG NỀN TRẮNG (Whiteout)
-                    float coverX = Math.Max(0, box.X - 2.0f);
-                    float coverY = Math.Max(0, box.Y - 2.0f);
-                    float coverW = Math.Min(pageSize.GetWidth() - coverX, box.Width + 4.0f);
-                    float coverH = Math.Max(box.Height + 4.0f, fontSize * 1.35f);
+                    // Giữ hộp che trắng vừa vặn BoundingBox thực tế, không lấn sang các đường kẻ ngang/dọc trang trí
+                    float coverX = Math.Max(0, box.X - 1.0f);
+                    float coverY = box.Y;
+                    float coverW = Math.Min(pageSize.GetWidth() - coverX, box.Width + 2.0f);
+                    float coverH = box.Height;
 
                     var pdfCanvas = new PdfCanvas(page);
                     pdfCanvas.SaveState();
@@ -104,51 +106,122 @@ public class PdfRebuilderService : IPdfRebuilderService
                     pdfCanvas.RestoreState();
 
                     // 3. TÍNH TOÁN CỠ CHỮ VÀ KHUNG VẼ (Fit & No-clipping)
-                    float maxAvailableWidth = pageSize.GetWidth() - box.X - 36f; // Chừa lề phải tối thiểu 36pt
+                    float maxAvailableWidth = Math.Max(box.Width, pageSize.GetWidth() - box.X - 36f);
 
-
-                    // Đối với tiêu đề hoặc dòng đơn: Cho phép mở rộng chiều ngang nếu tiếng Việt dài hơn
-                    float renderW = Math.Max(box.Width, Math.Min(maxAvailableWidth, box.Width * 1.35f));
-
-                    // Nếu là tiêu đề 1 dòng (chiều cao hộp nhỏ), tự động co nhẹ font nếu chữ dài vượt khung
-                    bool isSingleLine = box.Height <= fontSize * 1.6f;
-                    if (isSingleLine)
+                    // Mở rộng chiều ngang cho đoạn văn bản hoặc tiêu đề nếu lề phải còn trống
+                    float renderW = box.Width;
+                    if (box.Width > 280f)
                     {
-                        float textWidth = chosenFont.GetWidth(textToRender, fontSize);
-                        while (textWidth > renderW && fontSize > 10f)
+                        renderW = Math.Min(maxAvailableWidth, Math.Max(box.Width, 460f));
+                    }
+                    else
+                    {
+                        renderW = Math.Min(maxAvailableWidth, box.Width * 1.20f);
+                    }
+
+                    // Nhận diện dòng Mục lục (TOC): Bắt đầu bằng tên mục và kết thúc bằng số trang
+                    var tocMatch = Regex.Match(textToRender, @"^(.*?)\s+(\d+)$");
+                    bool isTocLine = tocMatch.Success && box.Width > 150f && (box.Height <= fontSize * 2.5f);
+
+                    float currentFontSize = fontSize;
+                    float lineLeading = 1.15f;
+                    bool isSingleLine = box.Height <= fontSize * 1.6f;
+
+                    // THUẬT TOÁN CO CHỮ THÔNG MINH (Auto Font-Fitting)
+                    // Giữ nguyên ranh giới hộp gốc: Không bao giờ để khối trên nở tràn đè lên khối dưới
+                    if (!isSingleLine && !isTocLine)
+                    {
+                        float targetHeight = box.Height + 1.5f;
+                        int maxIterations = 12;
+                        while (maxIterations-- > 0 && currentFontSize > 7.5f)
                         {
-                            fontSize -= 0.5f;
-                            textWidth = chosenFont.GetWidth(textToRender, fontSize);
+                            float totalWidth = chosenFont.GetWidth(textToRender, currentFontSize);
+                            float estLines = (float)Math.Ceiling(totalWidth / renderW);
+                            float estHeight = estLines * (currentFontSize * lineLeading);
+
+                            if (estHeight <= targetHeight)
+                            {
+                                break;
+                            }
+
+                            currentFontSize -= 0.5f;
+                            if (lineLeading > 1.0f)
+                            {
+                                lineLeading -= 0.03f;
+                            }
                         }
                     }
-                    else if (textToRender.Length > (block.OriginalText?.Length ?? 0) * 1.25f && fontSize > 8f)
+                    else if (isSingleLine || isTocLine)
                     {
-                        fontSize = Math.Max(8f, fontSize * 0.92f);
+                        // Dòng đơn / Mục lục: co cỡ font nếu text dài quá renderW
+                        while (currentFontSize > 7.5f && chosenFont.GetWidth(textToRender, currentFontSize) > renderW)
+                        {
+                            currentFontSize -= 0.5f;
+                        }
                     }
 
-                    // Tính chiều cao cần thiết cho văn bản để không bao giờ bị cắt dòng (no-clipping)
-                    float singleLineHeight = fontSize * 1.20f;
-                    float approxLines = (float)Math.Ceiling(chosenFont.GetWidth(textToRender, fontSize) / renderW);
-                    float neededHeight = Math.Max(box.Height + 4.0f, approxLines * singleLineHeight + 4.0f);
-
-                    // Điểm neo đỉnh (Top Y) giữ nguyên, đáy (Bottom Y) mở rộng xuống dưới
+                    // Khóa cứng chiều cao hiển thị trong phạm vi hộp gốc để chống đè chữ
+                    float renderH = Math.Max(box.Height, currentFontSize * lineLeading);
                     float topY = box.Y + box.Height;
-                    float adjustedBottomY = Math.Max(10f, topY - neededHeight);
-                    float renderH = topY - adjustedBottomY;
+                    float adjustedBottomY = topY - renderH;
 
                     var textRect = new iText.Kernel.Geom.Rectangle(box.X, adjustedBottomY, renderW, renderH);
 
                     using (var layoutCanvas = new Canvas(page, textRect))
                     {
-                        var paragraph = new Paragraph(textToRender)
-                            .SetFont(chosenFont)
-                            .SetFontSize(fontSize)
-                            .SetFontColor(ColorConstants.BLACK)
-                            .SetMargin(0)
-                            .SetPadding(0)
-                            .SetMultipliedLeading(1.15f);
+                        if (isTocLine)
+                        {
+                            // Định dạng mục lục: Tên mục căn trái, số trang căn phải thẳng hàng
+                            string titlePart = tocMatch.Groups[1].Value.Trim();
+                            string pagePart = tocMatch.Groups[2].Value.Trim();
 
-                        layoutCanvas.Add(paragraph);
+                            float pageColW = Math.Max(30f, chosenFont.GetWidth(pagePart, currentFontSize) + 6f);
+                            float titleColW = Math.Max(50f, renderW - pageColW);
+
+                            var tocTable = new Table(new float[] { titleColW, pageColW })
+                                .SetWidth(renderW)
+                                .SetBorder(iText.Layout.Borders.Border.NO_BORDER);
+
+                            var cellTitle = new Cell()
+                                .Add(new Paragraph(titlePart)
+                                    .SetFont(chosenFont)
+                                    .SetFontSize(currentFontSize)
+                                    .SetFontColor(ColorConstants.BLACK)
+                                    .SetMargin(0)
+                                    .SetPadding(0))
+                                .SetBorder(iText.Layout.Borders.Border.NO_BORDER)
+                                .SetPadding(0)
+                                .SetMargin(0)
+                                .SetTextAlignment(iText.Layout.Properties.TextAlignment.LEFT);
+
+                            var cellPage = new Cell()
+                                .Add(new Paragraph(pagePart)
+                                    .SetFont(chosenFont)
+                                    .SetFontSize(currentFontSize)
+                                    .SetFontColor(ColorConstants.BLACK)
+                                    .SetMargin(0)
+                                    .SetPadding(0))
+                                .SetBorder(iText.Layout.Borders.Border.NO_BORDER)
+                                .SetPadding(0)
+                                .SetMargin(0)
+                                .SetTextAlignment(iText.Layout.Properties.TextAlignment.RIGHT);
+
+                            tocTable.AddCell(cellTitle);
+                            tocTable.AddCell(cellPage);
+                            layoutCanvas.Add(tocTable);
+                        }
+                        else
+                        {
+                            var paragraph = new Paragraph(textToRender)
+                                .SetFont(chosenFont)
+                                .SetFontSize(currentFontSize)
+                                .SetFontColor(ColorConstants.BLACK)
+                                .SetMargin(0)
+                                .SetPadding(0)
+                                .SetMultipliedLeading(lineLeading);
+
+                            layoutCanvas.Add(paragraph);
+                        }
                     }
                 }
             }

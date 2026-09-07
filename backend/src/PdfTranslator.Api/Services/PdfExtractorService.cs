@@ -307,11 +307,42 @@ public class PdfExtractorService : IPdfExtractorService
         var trimmedPrev = prev.Text.Trim();
         var trimmedNext = next.Text.Trim();
 
-        // 3. Không gom nếu dòng trước kết thúc bằng dấu hai chấm ':' (giới thiệu danh sách / code)
-        if (trimmedPrev.EndsWith(":")) return false;
+        // 3. Header & Footer: Đỉnh trang (Y > 740) hoặc đáy trang (Y < 60) luôn đứng độc lập
+        if (prev.BoundingBox.Y > 740f || next.BoundingBox.Y > 740f) return false;
+        if (prev.BoundingBox.Y < 60f || next.BoundingBox.Y < 60f) return false;
 
-        // 4. Không gom nếu dòng mới là một mục danh sách hoặc tiêu đề con
+        // 4. Mục lục (TOC): Dòng kết thúc bằng số trang (ví dụ "What is the UML? 7" hoặc "... 10")
+        if (Regex.IsMatch(trimmedPrev, @"\s+\d+$") || Regex.IsMatch(trimmedNext, @"\s+\d+$"))
+            return false;
+
+        // 5. Tiêu đề mục lục toàn chữ in hoa (như "AN INTRODUCTION TO THE UML", "OBJECT ORIENTATION")
+        if (trimmedPrev.Length > 3 && trimmedPrev.All(c => !char.IsLetter(c) || char.IsUpper(c)))
+            return false;
+        if (trimmedNext.Length > 3 && trimmedNext.All(c => !char.IsLetter(c) || char.IsUpper(c)))
+            return false;
+
+        // 6. Không gom nếu dòng trước kết thúc bằng dấu hai chấm ':' hoặc chấm hỏi '?'
+        if (trimmedPrev.EndsWith(":") || trimmedPrev.EndsWith("?")) return false;
+
+        // 7. Không gom nếu là Tiêu đề / Chú thích hình ảnh: Chapter, Figure, Table, Contents, Summary
+        if (trimmedPrev.StartsWith("Chapter", StringComparison.OrdinalIgnoreCase) ||
+            trimmedNext.StartsWith("Chapter", StringComparison.OrdinalIgnoreCase) ||
+            trimmedPrev.StartsWith("Chương", StringComparison.OrdinalIgnoreCase) ||
+            trimmedNext.StartsWith("Chương", StringComparison.OrdinalIgnoreCase) ||
+            trimmedPrev.StartsWith("Figure", StringComparison.OrdinalIgnoreCase) ||
+            trimmedNext.StartsWith("Figure", StringComparison.OrdinalIgnoreCase) ||
+            trimmedPrev.StartsWith("Hình", StringComparison.OrdinalIgnoreCase) ||
+            trimmedNext.StartsWith("Hình", StringComparison.OrdinalIgnoreCase) ||
+            trimmedPrev.Equals("Contents", StringComparison.OrdinalIgnoreCase) ||
+            trimmedPrev.Equals("Mục lục", StringComparison.OrdinalIgnoreCase) ||
+            trimmedPrev.Equals("Summary", StringComparison.OrdinalIgnoreCase) ||
+            trimmedPrev.Equals("Tóm tắt", StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        // 8. Không gom nếu dòng mới là một mục danh sách hoặc tiêu đề con
         if (trimmedNext.StartsWith("•") || trimmedNext.StartsWith("-") || trimmedNext.StartsWith("*"))
+            return false;
+        if (trimmedPrev.StartsWith("•") && (trimmedPrev.EndsWith(".") || trimmedPrev.EndsWith(";")))
             return false;
         if (Regex.IsMatch(trimmedNext, @"^\d+[\.\)]\s"))
             return false;
@@ -322,36 +353,41 @@ public class PdfExtractorService : IPdfExtractorService
             trimmedNext.StartsWith("Vấn đề", StringComparison.OrdinalIgnoreCase))
             return false;
 
-        // 5. Nếu dòng trước kết thúc bằng dấu chấm/chấm hỏi/chấm than và có thụt lề khác nhau
+        // 9. Dấu chấm kết thúc câu: Nếu là dòng ngắn (< 380px) hoặc có khoảng cách dòng phụ -> đoạn mới
         float xDiff = Math.Abs(prev.BoundingBox.X - next.BoundingBox.X);
-        if (trimmedPrev.EndsWith(".") || trimmedPrev.EndsWith("!") || trimmedPrev.EndsWith("?"))
+        float prevBottom = prev.BoundingBox.Y;
+        float nextTop = next.BoundingBox.Y + next.BoundingBox.Height;
+        float verticalGap = prevBottom - nextTop;
+
+        if (trimmedPrev.EndsWith(".") || trimmedPrev.EndsWith("!"))
         {
-            // Nếu là 2 mục thụt lề (như các bullet list) hoặc lề trái lệch nhau > 12px
-            if (xDiff > 12f || prev.BoundingBox.X > 85f)
+            // Dòng ngắn kết thúc bằng dấu chấm chắc chắn là dòng cuối của đoạn văn
+            if (prev.BoundingBox.Width < 380f)
+            {
+                return false;
+            }
+            // Khoảng cách đoạn văn lớn hơn 5pt
+            if (verticalGap > 5.0f || xDiff > 8f)
             {
                 return false;
             }
         }
 
-        // 6. Không gom nếu kích cỡ font chênh lệch đáng kể (ví dụ Tiêu đề lớn và nội dung bài)
+        // 10. Không gom nếu kích cỡ font chênh lệch (> 1.5pt)
         float fontDiff = Math.Abs(prev.BoundingBox.FontSize - next.BoundingBox.FontSize);
-        if (fontDiff > 2.0f) return false;
+        if (fontDiff > 1.5f) return false;
 
-        // 7. Tiêu đề to (fontSize >= 18) luôn đứng độc lập
-        if (prev.BoundingBox.FontSize >= 18f || next.BoundingBox.FontSize >= 18f) return false;
+        // 11. Tiêu đề lớn (fontSize >= 14) luôn đứng độc lập
+        if (prev.BoundingBox.FontSize >= 14f || next.BoundingBox.FontSize >= 14f) return false;
 
-        // 8. Kiểm tra khoảng cách dòng theo trục dọc (Vertical Line Spacing)
-        float prevBottom = prev.BoundingBox.Y;
-        float nextTop = next.BoundingBox.Y + next.BoundingBox.Height;
-        float verticalGap = prevBottom - nextTop;
-
-        // Khoảng cách giữa 2 dòng trong 1 đoạn văn không được quá 1.25 lần cỡ font
-        float maxAllowedGap = prev.BoundingBox.FontSize * 1.25f;
-        if (verticalGap > maxAllowedGap || verticalGap < -10f)
+        // 12. Kiểm tra khoảng cách dòng theo trục dọc (Vertical Line Spacing)
+        // Khoảng cách giữa 2 dòng trong cùng 1 đoạn văn chỉ khoảng 1-5pt
+        float maxAllowedGap = Math.Min(6.5f, prev.BoundingBox.FontSize * 0.65f);
+        if (verticalGap > maxAllowedGap || verticalGap < -5f)
             return false;
 
-        // 9. Lệch lề trái quá nhiều (> 25px)
-        if (xDiff > 25f)
+        // 13. Lệch lề trái quá nhiều (> 15px)
+        if (xDiff > 15f)
         {
             return false;
         }

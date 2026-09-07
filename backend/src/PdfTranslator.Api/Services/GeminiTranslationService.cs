@@ -1,6 +1,8 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace PdfTranslator.Api.Services;
 
@@ -9,7 +11,7 @@ public class GeminiTranslationService : ITranslationService
     private readonly HttpClient _httpClient;
     private readonly ILogger<GeminiTranslationService> _logger;
     private readonly IConfiguration _configuration;
-    private const string DefaultModel = "gemini-3.6-flash";
+    private const string DefaultModel = "gemini-3.5-flash";
 
     public GeminiTranslationService(
         HttpClient httpClient,
@@ -216,15 +218,80 @@ public class GeminiTranslationService : ITranslationService
             throw new InvalidOperationException("Gemini không trả về nội dung bản dịch dictionary.");
         }
 
-        var cleanJson = CleanJsonString(rawContent);
-        using var innerDoc = JsonDocument.Parse(cleanJson);
-
         var results = new Dictionary<string, string>();
-        if (innerDoc.RootElement.ValueKind == JsonValueKind.Object)
+        bool parsedSuccessfully = false;
+
+        try
         {
-            foreach (var prop in innerDoc.RootElement.EnumerateObject())
+            var cleanJson = CleanJsonString(rawContent);
+            using var innerDoc = JsonDocument.Parse(cleanJson, new JsonDocumentOptions
             {
-                results[prop.Name] = prop.Value.GetString() ?? string.Empty;
+                AllowTrailingCommas = true,
+                CommentHandling = JsonCommentHandling.Skip
+            });
+
+            if (innerDoc.RootElement.ValueKind == JsonValueKind.Object)
+            {
+                foreach (var prop in innerDoc.RootElement.EnumerateObject())
+                {
+                    results[prop.Name] = prop.Value.GetString() ?? string.Empty;
+                }
+                parsedSuccessfully = true;
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "JsonDocument.Parse gặp lỗi khi parse JSON dictionary từ Gemini. Đang thử bằng Utf8JsonReader / Regex fallback...");
+        }
+
+        if (!parsedSuccessfully)
+        {
+            try
+            {
+                var cleanJson = CleanJsonString(rawContent);
+                int firstBrace = cleanJson.IndexOf('{');
+                if (firstBrace >= 0)
+                {
+                    cleanJson = cleanJson.Substring(firstBrace);
+                }
+                var utf8Bytes = Encoding.UTF8.GetBytes(cleanJson);
+                var reader = new Utf8JsonReader(utf8Bytes);
+                using var innerDoc = JsonDocument.ParseValue(ref reader);
+                if (innerDoc.RootElement.ValueKind == JsonValueKind.Object)
+                {
+                    foreach (var prop in innerDoc.RootElement.EnumerateObject())
+                    {
+                        results[prop.Name] = prop.Value.GetString() ?? string.Empty;
+                    }
+                    parsedSuccessfully = true;
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Utf8JsonReader ParseValue cũng không đọc được. Tiến hành Regex fallback theo từng key...");
+            }
+        }
+
+        if (!parsedSuccessfully || results.Count < items.Count)
+        {
+            // Regex fallback: trích xuất giá trị theo từng key đã biết trong items
+            foreach (var key in items.Keys)
+            {
+                if (results.ContainsKey(key) && !string.IsNullOrWhiteSpace(results[key])) continue;
+
+                var pattern = $@"""{Regex.Escape(key)}""\s*:\s*""((?:\\.|[^""\\])*)""";
+                var match = Regex.Match(rawContent, pattern);
+                if (match.Success)
+                {
+                    try
+                    {
+                        results[key] = Regex.Unescape(match.Groups[1].Value);
+                    }
+                    catch
+                    {
+                        results[key] = match.Groups[1].Value;
+                    }
+                }
             }
         }
 
@@ -246,8 +313,8 @@ public class GeminiTranslationService : ITranslationService
     /// </summary>
     private async Task<HttpResponseMessage> SendWithRetryAsync(Func<Task<HttpResponseMessage>> sendRequest)
     {
-        const int maxRetries = 4;
-        int delayMs = 2000;
+        const int maxRetries = 6;
+        int delayMs = 2500;
 
         for (int attempt = 1; attempt <= maxRetries; attempt++)
         {
@@ -277,13 +344,21 @@ public class GeminiTranslationService : ITranslationService
                     waitMs = (int)(response.Headers.RetryAfter.Date.Value - DateTimeOffset.UtcNow).TotalMilliseconds;
                 }
 
-                waitMs = Math.Max(1500, waitMs);
+                if (response.StatusCode == HttpStatusCode.TooManyRequests)
+                {
+                    waitMs = Math.Max(5000, waitMs);
+                }
+                else
+                {
+                    waitMs = Math.Max(2000, waitMs);
+                }
+
                 _logger.LogWarning(
                     "Gemini trả về mã {StatusCode} (Rate Limit / Quá tải). Đang chờ {WaitSeconds:F1}s trước khi thử lại lần {Attempt}/{MaxRetries}...",
                     response.StatusCode, waitMs / 1000.0, attempt, maxRetries);
 
                 await Task.Delay(waitMs);
-                delayMs *= 2;
+                delayMs = (int)(delayMs * 1.75);
                 continue;
             }
 
@@ -338,6 +413,7 @@ public class GeminiTranslationService : ITranslationService
 
     private static string CleanJsonString(string raw)
     {
+        if (string.IsNullOrWhiteSpace(raw)) return "{}";
         var clean = raw.Trim();
         if (clean.StartsWith("```json", StringComparison.OrdinalIgnoreCase))
         {
@@ -348,9 +424,10 @@ public class GeminiTranslationService : ITranslationService
             clean = clean.Substring(3);
         }
 
-        if (clean.EndsWith("```"))
+        var endFence = clean.LastIndexOf("```", StringComparison.Ordinal);
+        if (endFence >= 0)
         {
-            clean = clean.Substring(0, clean.Length - 3);
+            clean = clean.Substring(0, endFence);
         }
 
         return clean.Trim();
