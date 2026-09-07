@@ -1,7 +1,17 @@
 import React, { useState } from 'react';
 import { jobsApi } from './services/api';
 import { CreateJobResponse, JobDetailResponse } from './types/job.types';
-import { FileUp, FileText, CheckCircle2, AlertCircle, RefreshCw, Languages } from 'lucide-react';
+import { 
+  FileUp, 
+  FileText, 
+  CheckCircle2, 
+  AlertCircle, 
+  RefreshCw, 
+  Languages, 
+  Sparkles, 
+  Download, 
+  ExternalLink 
+} from 'lucide-react';
 
 export function App() {
   const [file, setFile] = useState<File | null>(null);
@@ -13,6 +23,10 @@ export function App() {
   const [jobDetail, setJobDetail] = useState<JobDetailResponse | null>(null);
   const [extractedBlocks, setExtractedBlocks] = useState<any[]>([]);
   const [isExtracting, setIsExtracting] = useState(false);
+  const [isTranslating, setIsTranslating] = useState(false);
+  const [translateMessage, setTranslateMessage] = useState<string | null>(null);
+  const [fromPageInput, setFromPageInput] = useState<string>('');
+  const [toPageInput, setToPageInput] = useState<string>('');
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
@@ -75,6 +89,28 @@ export function App() {
       setError(err.response?.data?.message || 'Lỗi khi trích xuất PDF.');
     } finally {
       setIsExtracting(false);
+    }
+  };
+
+  const handleTranslate = async () => {
+    if (!currentJob) return;
+    try {
+      setIsTranslating(true);
+      setError(null);
+      setTranslateMessage(null);
+      const fromP = fromPageInput ? parseInt(fromPageInput, 10) : undefined;
+      const toP = toPageInput ? parseInt(toPageInput, 10) : undefined;
+      const res = await jobsApi.translateJob(currentJob.jobId, fromP, toP);
+      setTranslateMessage(res.message || 'Dịch tài liệu thành công!');
+      const detail = await jobsApi.getJobById(currentJob.jobId);
+      setJobDetail(detail);
+      // Reload blocks to display translated text
+      const blocksData = await jobsApi.extractJobContent(currentJob.jobId);
+      setExtractedBlocks(blocksData.blocks || []);
+    } catch (err: any) {
+      setError(err.response?.data?.message || 'Có lỗi xảy ra trong quá trình dịch thuật AI.');
+    } finally {
+      setIsTranslating(false);
     }
   };
 
@@ -268,11 +304,114 @@ export function App() {
             </span>
           </div>
 
+          {/* Action: Giai đoạn 3 & 4: Dịch thuật AI & Xuất bản PDF Tiếng Việt */}
+          <div style={{ marginTop: '1.5rem', padding: '1.25rem', background: '#0f172a', borderRadius: '8px', border: '1px solid #334155' }}>
+            <h3 style={{ fontSize: '1.1rem', color: '#38bdf8', marginBottom: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <Sparkles size={20} color="#38bdf8" />
+              Giai đoạn 3 & 4: Dịch thuật AI & Xuất bản PDF Tiếng Việt
+            </h3>
+
+            {/* Range selection */}
+            <div style={{ display: 'flex', gap: '1rem', alignItems: 'center', flexWrap: 'wrap', marginBottom: '1rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <span style={{ fontSize: '0.875rem', color: '#94a3b8' }}>Từ trang:</span>
+                <input
+                  type="number"
+                  placeholder="1"
+                  min="1"
+                  value={fromPageInput}
+                  onChange={(e) => setFromPageInput(e.target.value)}
+                  style={{ width: '70px', padding: '0.4rem', borderRadius: '4px', background: '#1e293b', border: '1px solid #475569', color: '#fff' }}
+                />
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <span style={{ fontSize: '0.875rem', color: '#94a3b8' }}>Đến trang:</span>
+                <input
+                  type="number"
+                  placeholder="Tất cả"
+                  min="1"
+                  value={toPageInput}
+                  onChange={(e) => setToPageInput(e.target.value)}
+                  style={{ width: '80px', padding: '0.4rem', borderRadius: '4px', background: '#1e293b', border: '1px solid #475569', color: '#fff' }}
+                />
+              </div>
+              <span style={{ fontSize: '0.8rem', color: '#64748b' }}>(Để trống để dịch toàn bộ tài liệu)</span>
+            </div>
+
+            {/* Translate and Export Buttons */}
+            <div style={{ display: 'flex', gap: '1rem', alignItems: 'center', flexWrap: 'wrap' }}>
+              <button
+                onClick={handleTranslate}
+                disabled={isTranslating || isExtracting}
+                style={{
+                  backgroundColor: '#8b5cf6',
+                  padding: '0.6rem 1.2rem',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.5rem',
+                  fontWeight: 600
+                }}
+              >
+                {isTranslating ? <RefreshCw size={18} className="spin" /> : <Sparkles size={18} />}
+                {isTranslating ? 'Đang dịch AI từng trang...' : 'Bắt đầu Dịch sang Tiếng Việt (AI)'}
+              </button>
+
+              <a
+                href={jobsApi.getTranslatedPdfUrl(currentJob.jobId)}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{
+                  backgroundColor: '#0284c7',
+                  color: 'white',
+                  padding: '0.6rem 1.2rem',
+                  borderRadius: '8px',
+                  textDecoration: 'none',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '0.5rem',
+                  fontWeight: 600,
+                  fontSize: '1em'
+                }}
+              >
+                <ExternalLink size={18} />
+                Xem PDF Tiếng Việt
+              </a>
+
+              <a
+                href={jobsApi.getDownloadUrl(currentJob.jobId)}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{
+                  backgroundColor: '#059669',
+                  color: 'white',
+                  padding: '0.6rem 1.2rem',
+                  borderRadius: '8px',
+                  textDecoration: 'none',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '0.5rem',
+                  fontWeight: 600,
+                  fontSize: '1em'
+                }}
+              >
+                <Download size={18} />
+                Tải File PDF (.pdf)
+              </a>
+            </div>
+
+            {translateMessage && (
+              <div style={{ marginTop: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#34d399', background: '#064e3b', padding: '0.6rem 1rem', borderRadius: '6px', fontSize: '0.875rem' }}>
+                <CheckCircle2 size={18} />
+                <span>{translateMessage}</span>
+              </div>
+            )}
+          </div>
+
           {/* Render List of Extracted Blocks */}
           {extractedBlocks.length > 0 && (
             <div style={{ marginTop: '1.5rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
               <h3 style={{ fontSize: '1.1rem', color: '#f8fafc' }}>
-                Danh sách Text Blocks đã trích xuất:
+                Danh sách Text Blocks đã trích xuất & Dịch thuật:
               </h3>
               <div style={{ maxHeight: '350px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
                 {extractedBlocks.map((b: any, idx: number) => (
@@ -290,7 +429,12 @@ export function App() {
                       <span><strong>Trang {b.pageIndex}</strong> | Khối #{b.orderIndex} ({b.blockType})</span>
                       <span>Font: <strong>{b.boundingBox?.fontName}</strong> ({b.boundingBox?.fontSize}pt)</span>
                     </div>
-                    <p style={{ color: '#f1f5f9', fontWeight: 500, margin: '0.25rem 0' }}>"{b.text}"</p>
+                    <p style={{ color: '#f1f5f9', fontWeight: 500, margin: '0.25rem 0' }}>"{b.text || b.originalText}"</p>
+                    {b.translatedText && (
+                      <p style={{ color: '#34d399', fontWeight: 500, margin: '0.25rem 0', borderLeft: '3px solid #10b981', paddingLeft: '0.5rem' }}>
+                        Dịch: "{b.translatedText}"
+                      </p>
+                    )}
                     <div style={{ color: '#64748b', fontSize: '0.75rem', fontFamily: 'monospace' }}>
                       BoundingBox: X={b.boundingBox?.x}, Y={b.boundingBox?.y}, W={b.boundingBox?.width}, H={b.boundingBox?.height}
                     </div>

@@ -41,6 +41,36 @@ export const jobsApi = {
     const response = await apiClient.post(`/jobs/${id}/extract`);
     return response.data;
   },
+
+  /**
+   * Dịch tài liệu theo batch từng trang bằng AI (Giai đoạn 3 & 4)
+   */
+  async translateJob(id: string, fromPage?: number, toPage?: number): Promise<any> {
+    let url = `/jobs/${id}/translate`;
+    const params = new URLSearchParams();
+    if (fromPage !== undefined) params.append('fromPage', fromPage.toString());
+    if (toPage !== undefined) params.append('toPage', toPage.toString());
+    const queryString = params.toString();
+    if (queryString) {
+      url += `?${queryString}`;
+    }
+    const response = await apiClient.post(url);
+    return response.data;
+  },
+
+  /**
+   * Lấy URL mở xem trực tiếp PDF tiếng Việt trên trình duyệt
+   */
+  getTranslatedPdfUrl(id: string): string {
+    return `${API_BASE_URL}/jobs/${id}/translated-pdf`;
+  },
+
+  /**
+   * Lấy URL tải file PDF tiếng Việt về máy tính
+   */
+  getDownloadUrl(id: string): string {
+    return `${API_BASE_URL}/jobs/${id}/download`;
+  },
 };
 
 export default apiClient;
