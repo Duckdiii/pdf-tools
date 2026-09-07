@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("PdfTranslator.Api")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+05ee53374641025a9fbaab4a8af72acbec18e225")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+f04b3537591fe81fd8c65d8ceb57337f021d0eae")]
 [assembly: System.Reflection.AssemblyProductAttribute("PdfTranslator.Api")]
 [assembly: System.Reflection.AssemblyTitleAttribute("PdfTranslator.Api")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
