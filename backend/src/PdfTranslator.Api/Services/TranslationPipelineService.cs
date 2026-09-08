@@ -87,6 +87,12 @@ public class TranslationPipelineService : ITranslationPipelineService
             // -------------------------------------------------------------
             // BƯỚC 2: TRANSLATING - Dịch theo Batch từng trang bằng AI
             // -------------------------------------------------------------
+            // TUẦN 6: Gán TranslatedText = OriginalText cho các khối IMAGE và FORMULA_TEXT để bảo toàn nguyên trạng
+            foreach (var b in newBlocks.Where(b => b.BlockType != "TEXT"))
+            {
+                b.TranslatedText = b.OriginalText;
+            }
+
             var textBlocks = newBlocks
                 .Where(b => b.BlockType == "TEXT" && !string.IsNullOrWhiteSpace(b.OriginalText))
                 .OrderBy(b => b.PageIndex)

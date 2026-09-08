@@ -27,6 +27,14 @@ export const jobsApi = {
   },
 
   /**
+   * Tạo Job PDF học thuật mẫu (có công thức LaTeX & ảnh) để kiểm thử Tuần 6
+   */
+  async createSampleAcademicJob(): Promise<CreateJobResponse> {
+    const response = await apiClient.post<CreateJobResponse>('/jobs/create-sample-academic');
+    return response.data;
+  },
+
+  /**
    * Lấy trạng thái của Job theo ID
    */
   async getJobById(id: string): Promise<JobDetailResponse> {
@@ -51,6 +59,14 @@ export const jobsApi = {
   },
 
   /**
+   * Lấy danh sách ContentBlocks của Job từ Database (kèm blockType, BoundingBox, TranslatedText)
+   */
+  async getJobBlocks(id: string): Promise<any> {
+    const response = await apiClient.get(`/jobs/${id}/blocks`);
+    return response.data;
+  },
+
+  /**
    * Dịch tài liệu theo batch từng trang bằng AI (Giai đoạn 3 & 4)
    */
   async translateJob(id: string, fromPage?: number, toPage?: number): Promise<any> {
@@ -64,6 +80,13 @@ export const jobsApi = {
     }
     const response = await apiClient.post(url);
     return response.data;
+  },
+
+  /**
+   * Lấy URL mở xem trực tiếp PDF gốc trên trình duyệt
+   */
+  getOriginalPdfUrl(id: string): string {
+    return `${API_BASE_URL}/jobs/${id}/original-pdf`;
   },
 
   /**

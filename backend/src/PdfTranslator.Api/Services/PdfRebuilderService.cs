@@ -74,6 +74,12 @@ public class PdfRebuilderService : IPdfRebuilderService
 
                     if (box == null || box.Width <= 0 || box.Height <= 0) continue;
 
+                    // TUẦN 6: Giữ nguyên 100% hình ảnh và công thức toán học gốc, tuyệt đối không whiteout, không vẽ đè
+                    if (block.BlockType == "IMAGE" || block.BlockType == "FORMULA_TEXT")
+                    {
+                        continue;
+                    }
+
                     // Nội dung cần vẽ: Ưu tiên TranslatedText, fallback OriginalText
                     var textToRender = !string.IsNullOrWhiteSpace(block.TranslatedText)
                         ? block.TranslatedText

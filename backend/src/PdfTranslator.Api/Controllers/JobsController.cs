@@ -125,6 +125,165 @@ public class JobsController : ControllerBase
     }
 
     /// <summary>
+    /// API Tạo và kích hoạt một Job PDF học thuật mẫu (Tuần 6 Checkpoint):
+    /// Chứa tiêu đề, đoạn văn lý thuyết tiếng Anh, 2 công thức toán học và 1 hình ảnh XObject Image
+    /// </summary>
+    [HttpPost("create-sample-academic")]
+    public async Task<IActionResult> CreateSampleAcademicJob()
+    {
+        var uploadsFolder = Path.Combine(_environment.ContentRootPath, "storage", "uploads");
+        if (!Directory.Exists(uploadsFolder)) Directory.CreateDirectory(uploadsFolder);
+
+        var jobId = Guid.NewGuid();
+        var fileName = "sample_academic_optimization.pdf";
+        var filePath = Path.Combine(uploadsFolder, $"{jobId}_{fileName}");
+
+        // Tạo ảnh BMP hợp lệ kích thước 260x70 px với dải màu gradient và đường cong hàm loss
+        byte[] imageBytes = CreateSampleBmp(260, 70);
+
+        // Tạo file PDF học thuật bằng iText7
+        using (var writer = new iText.Kernel.Pdf.PdfWriter(filePath))
+        using (var pdf = new iText.Kernel.Pdf.PdfDocument(writer))
+        using (var doc = new iText.Layout.Document(pdf))
+        {
+            // 1. Tiêu đề bài báo học thuật
+            doc.Add(new iText.Layout.Element.Paragraph("Deep Neural Network Optimization and Empirical Risk Minimization")
+                .SetFontSize(17));
+
+            doc.Add(new iText.Layout.Element.Paragraph("Academic Research Division - Advanced Machine Learning Lab")
+                .SetFontSize(10)
+                .SetFontColor(iText.Kernel.Colors.ColorConstants.GRAY));
+
+            // 2. Đoạn văn bản lý thuyết dẫn nhập
+            doc.Add(new iText.Layout.Element.Paragraph("In deep learning, predictive models minimize an empirical risk objective function over training datasets to optimize model parameters. The regularized objective function is formalized as:")
+                .SetFontSize(12));
+
+            // 3. Công thức Toán học 1 (Display Formula với ký hiệu Hy Lạp, tổng Sigma, chỉ số trên/dưới)
+            doc.Add(new iText.Layout.Element.Paragraph("L(θ) = (1/N) ∑ [ y_i * log(ŷ_i) + (1 - y_i) * log(1 - ŷ_i) ] + (λ/2) * ||θ||^2    (1)")
+                .SetFontSize(13)
+                .SetFontColor(iText.Kernel.Colors.ColorConstants.DARK_GRAY)
+                .SetTextAlignment(iText.Layout.Properties.TextAlignment.CENTER));
+
+            // 4. Đoạn văn giải thích tham số công thức
+            doc.Add(new iText.Layout.Element.Paragraph("where θ ∈ ℝ^d represents the model parameter vector, λ > 0 denotes the regularization hyperparameter, and N is the number of training samples.")
+                .SetFontSize(12));
+
+            // 5. Hình ảnh đồ họa minh họa (XObject Image qua toán tử Do)
+            var itextImage = new iText.Layout.Element.Image(iText.IO.Image.ImageDataFactory.Create(imageBytes))
+                .SetHorizontalAlignment(iText.Layout.Properties.HorizontalAlignment.CENTER)
+                .SetMarginTop(8)
+                .SetMarginBottom(8);
+            doc.Add(itextImage);
+
+            // 6. Công thức Toán học 2 (Gradient Descent Update Rule)
+            doc.Add(new iText.Layout.Element.Paragraph("g_t = ∇_θ L(θ_t),    θ_{t+1} = θ_t - η * g_t    (2)")
+                .SetFontSize(13)
+                .SetFontColor(iText.Kernel.Colors.ColorConstants.DARK_GRAY)
+                .SetTextAlignment(iText.Layout.Properties.TextAlignment.CENTER));
+
+            // 7. Đoạn văn kết luận
+            doc.Add(new iText.Layout.Element.Paragraph("This iterative gradient formulation ensures convergence toward local minima under standard smoothness assumptions and learning rate constraints.")
+                .SetFontSize(12));
+        }
+
+        var job = new TranslationJob
+        {
+            Id = jobId,
+            OriginalFileName = fileName,
+            StoredFilePath = filePath,
+            SourceLanguage = "en",
+            TargetLanguage = "vi",
+            Status = JobStatus.Pending,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        _context.TranslationJobs.Add(job);
+
+        _context.JobStatusHistories.Add(new JobStatusHistory
+        {
+            Id = Guid.NewGuid(),
+            TranslationJobId = job.Id,
+            FromStatus = null,
+            ToStatus = JobStatus.Pending,
+            ChangedAt = DateTime.UtcNow,
+            Message = "File PDF học thuật mẫu (có công thức LaTeX & ảnh) đã được tạo và đưa vào hàng đợi xử lý ngầm."
+        });
+
+        await _context.SaveChangesAsync();
+
+        // Đẩy vào Hangfire Background Job
+        BackgroundJob.Enqueue<ITranslationPipelineService>(svc =>
+            svc.ProcessJobPipelineAsync(job.Id, CancellationToken.None));
+
+        return Accepted(new
+        {
+            jobId = job.Id,
+            fileName = job.OriginalFileName,
+            sourceLanguage = job.SourceLanguage,
+            targetLanguage = job.TargetLanguage,
+            status = job.Status.ToString(),
+            message = "Tạo file PDF học thuật mẫu thành công. Hangfire đang tự động xử lý bóc tách, phân loại và dịch thuật!",
+            statusUrl = $"/api/jobs/{job.Id}/status"
+        });
+    }
+
+    /// <summary>
+    /// Helper sinh byte ảnh BMP chuẩn 24-bit độc lập không phụ thuộc thư viện đồ họa hệ điều hành
+    /// </summary>
+    private static byte[] CreateSampleBmp(int width, int height)
+    {
+        int rowSize = (width * 3 + 3) & ~3;
+        int imageSize = rowSize * height;
+        int fileSize = 54 + imageSize;
+
+        byte[] bmp = new byte[fileSize];
+
+        bmp[0] = 0x42; // 'B'
+        bmp[1] = 0x4D; // 'M'
+        BitConverter.GetBytes(fileSize).CopyTo(bmp, 2);
+        BitConverter.GetBytes(54).CopyTo(bmp, 10);
+
+        BitConverter.GetBytes(40).CopyTo(bmp, 14);
+        BitConverter.GetBytes(width).CopyTo(bmp, 18);
+        BitConverter.GetBytes(height).CopyTo(bmp, 22);
+        BitConverter.GetBytes((short)1).CopyTo(bmp, 26);
+        BitConverter.GetBytes((short)24).CopyTo(bmp, 28);
+        BitConverter.GetBytes(imageSize).CopyTo(bmp, 34);
+
+        for (int y = 0; y < height; y++)
+        {
+            int rowStart = 54 + y * rowSize;
+            for (int x = 0; x < width; x++)
+            {
+                int p = rowStart + x * 3;
+                // Khung viền
+                if (x < 2 || x >= width - 2 || y < 2 || y >= height - 2)
+                {
+                    bmp[p] = 130;
+                    bmp[p + 1] = 60;
+                    bmp[p + 2] = 15;
+                }
+                // Đường cong hàm loss y = f(x)
+                else if (Math.Abs(y - (int)(height * 0.7 * Math.Exp(-x * 0.02) + 12)) <= 1)
+                {
+                    bmp[p] = 30;      // B
+                    bmp[p + 1] = 50;  // G
+                    bmp[p + 2] = 230; // R (Đỏ nổi bật)
+                }
+                else
+                {
+                    // Nền xám nhạt dịu mắt
+                    bmp[p] = (byte)(245 - x / 8);
+                    bmp[p + 1] = (byte)(248 - x / 10);
+                    bmp[p + 2] = 252;
+                }
+            }
+        }
+
+        return bmp;
+    }
+
+    /// <summary>
     /// API Upload file PDF và tạo Job dịch mới
     /// </summary>
     [HttpPost]
@@ -511,6 +670,37 @@ public class JobsController : ControllerBase
     }
 
     /// <summary>
+    /// API Xem trực tiếp file PDF gốc trên trình duyệt (cho Side-by-Side Dual Viewer)
+    /// </summary>
+    [HttpGet("{id:guid}/original-pdf")]
+    public async Task<IActionResult> GetOriginalPdf(Guid id)
+    {
+        var job = await _context.TranslationJobs.FirstOrDefaultAsync(j => j.Id == id);
+        if (job == null)
+        {
+            return NotFound(new { message = $"Không tìm thấy Job với mã ID: {id}" });
+        }
+
+        var filePath = job.StoredFilePath;
+        if (!System.IO.File.Exists(filePath))
+        {
+            var fallback = Path.Combine(_environment.ContentRootPath, "storage", "uploads", Path.GetFileName(filePath));
+            if (System.IO.File.Exists(fallback))
+            {
+                filePath = fallback;
+                job.StoredFilePath = fallback;
+            }
+            else
+            {
+                return BadRequest(new { message = $"File PDF gốc không tồn tại tại: {job.StoredFilePath}" });
+            }
+        }
+
+        var fileStream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read);
+        return File(fileStream, "application/pdf", enableRangeProcessing: true);
+    }
+
+    /// <summary>
     /// API Xem trực tiếp file PDF đã dịch tiếng Việt trên trình duyệt (Phase 4)
     /// </summary>
     [HttpGet("{id:guid}/translated-pdf")]
@@ -697,6 +887,12 @@ public class JobsController : ControllerBase
         if (textBlocks.Count == 0)
         {
             return BadRequest(new { message = "Job chưa có khối văn bản nào được bóc tách. Vui lòng gọi API /extract trước." });
+        }
+
+        // TUẦN 6: Gán TranslatedText = OriginalText cho các khối IMAGE và FORMULA_TEXT để bảo toàn
+        foreach (var b in job.ContentBlocks.Where(b => b.BlockType != "TEXT"))
+        {
+            b.TranslatedText = b.OriginalText;
         }
 
         job.Status = JobStatus.Translating;

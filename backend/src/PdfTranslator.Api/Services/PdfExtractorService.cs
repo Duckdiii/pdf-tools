@@ -41,18 +41,68 @@ public class PdfExtractorService : IPdfExtractorService
                 var processor = new PdfCanvasProcessor(listener);
                 processor.ProcessPageContent(page);
 
-                // Gom các mẩu text rời rạc thành các Text Block có nghĩa
-                var pageBlocks = GroupChunksIntoBlocks(listener.RawChunks, pageNum, ref globalOrderIndex);
-                result.AddRange(pageBlocks);
+                // 1. Gom các mẩu text rời rạc thành các Text Block có nghĩa
+                var pageTextBlocks = GroupChunksIntoBlocks(listener.RawChunks, pageNum, ref globalOrderIndex);
+
+                // 2. Phân loại Heuristic: FORMULA_TEXT vs TEXT
+                foreach (var b in pageTextBlocks)
+                {
+                    if (IsFormulaBlock(b))
+                    {
+                        b.BlockType = "FORMULA_TEXT";
+                    }
+                }
+
+                // 3. Gom các Image XObject (toán tử Do) thành Image Block
+                var pageImageBlocks = new List<ExtractedBlockDto>();
+                foreach (var img in listener.RawImages)
+                {
+                    pageImageBlocks.Add(new ExtractedBlockDto
+                    {
+                        PageIndex = pageNum,
+                        OrderIndex = 0,
+                        Text = "[IMAGE]",
+                        BlockType = "IMAGE",
+                        BoundingBox = new BoundingBoxDto
+                        {
+                            X = (float)Math.Round(img.X, 2),
+                            Y = (float)Math.Round(img.Y, 2),
+                            Width = (float)Math.Round(img.Width, 2),
+                            Height = (float)Math.Round(img.Height, 2),
+                            FontName = "None",
+                            FontSize = 0
+                        }
+                    });
+                }
+
+                // 4. Kết hợp cả Text, Formula và Image, sắp xếp theo thứ tự hiển thị từ trên xuống dưới
+                var allPageBlocks = pageTextBlocks.Concat(pageImageBlocks)
+                    .OrderByDescending(b => b.BoundingBox.Y + b.BoundingBox.Height)
+                    .ThenBy(b => b.BoundingBox.X)
+                    .ToList();
+
+                for (int i = 0; i < allPageBlocks.Count; i++)
+                {
+                    allPageBlocks[i].OrderIndex = globalOrderIndex++;
+                }
+
+                result.AddRange(allPageBlocks);
             }
         }
 
-        _logger.LogInformation("Trích xuất hoàn tất! Tổng cộng trích được {Count} block(s).", result.Count);
+        _logger.LogInformation("Trích xuất hoàn tất! Tổng cộng trích được {Count} block(s) (gồm {TextCount} Text, {FormulaCount} Formula, {ImageCount} Image).",
+            result.Count,
+            result.Count(b => b.BlockType == "TEXT"),
+            result.Count(b => b.BlockType == "FORMULA_TEXT"),
+            result.Count(b => b.BlockType == "IMAGE"));
         return Task.FromResult(result);
     }
 
     /// <summary>
-    /// Vẽ các khung viền chữ nhật màu đỏ bao quanh các Text Block lên bản sao của file PDF
+    /// Vẽ các khung viền chữ nhật màu phân biệt bao quanh các Block lên bản sao của file PDF:
+    /// - Đỏ: TEXT (Văn bản thông thường)
+    /// - Tím: FORMULA_TEXT (Công thức toán học)
+    /// - Xanh lá: IMAGE (Hình ảnh đồ họa / XObject)
     /// </summary>
     public Task<string> GenerateDebugPdfAsync(string inputPdfPath, List<ExtractedBlockDto> blocks)
     {
@@ -71,7 +121,7 @@ public class PdfExtractorService : IPdfExtractorService
         {
             int totalPages = pdfDoc.GetNumberOfPages();
 
-            // Nhóm các khối văn bản theo từng trang để vẽ
+            // Nhóm các khối theo từng trang để vẽ
             var blocksByPage = blocks.GroupBy(b => b.PageIndex);
 
             foreach (var pageGroup in blocksByPage)
@@ -84,9 +134,22 @@ public class PdfExtractorService : IPdfExtractorService
 
                 foreach (var b in pageGroup)
                 {
-                    // Cấu hình nét vẽ: Viền đỏ mảnh 0.8px
-                    canvas.SetStrokeColor(ColorConstants.RED);
-                    canvas.SetLineWidth(0.8f);
+                    // Cấu hình màu sắc viền dựa theo BlockType
+                    if (b.BlockType == "IMAGE")
+                    {
+                        canvas.SetStrokeColor(ColorConstants.GREEN);
+                        canvas.SetLineWidth(1.5f);
+                    }
+                    else if (b.BlockType == "FORMULA_TEXT")
+                    {
+                        canvas.SetStrokeColor(ColorConstants.MAGENTA);
+                        canvas.SetLineWidth(1.3f);
+                    }
+                    else
+                    {
+                        canvas.SetStrokeColor(ColorConstants.RED);
+                        canvas.SetLineWidth(0.8f);
+                    }
 
                     // Vẽ hình chữ nhật theo đúng toạ độ (X, Y, Width, Height) của BoundingBox
                     canvas.Rectangle(
@@ -296,6 +359,9 @@ public class PdfExtractorService : IPdfExtractorService
     /// </summary>
     private static bool ShouldMergeIntoParagraph(ExtractedBlockDto prev, ExtractedBlockDto next)
     {
+        // 0. Không gom nếu một trong hai dòng là Công thức Toán học (FORMULA_TEXT)
+        if (IsFormulaBlock(prev) || IsFormulaBlock(next)) return false;
+
         // 1. Phải cùng một trang
         if (prev.PageIndex != next.PageIndex) return false;
 
@@ -426,11 +492,155 @@ public class PdfExtractorService : IPdfExtractorService
     }
 
     /// <summary>
-    /// Listener bắt các sự kiện vẽ chữ từ engine render của iText7
+    /// Heuristic phân biệt khối văn bản là Công thức Toán học (FORMULA_TEXT)
+    /// Dựa vào: Hệ font toán học, dải ký tự Unicode Math/Hy Lạp, mật độ toán tử và cấu trúc token
+    /// </summary>
+    public static bool IsFormulaBlock(ExtractedBlockDto block)
+    {
+        if (string.IsNullOrWhiteSpace(block.Text)) return false;
+
+        // 1. Kiểm tra Font toán học chuyên dụng
+        if (IsMathFont(block.BoundingBox?.FontName))
+        {
+            return true;
+        }
+
+        var text = block.Text.Trim();
+
+        // 2. Phân tích ký tự: Đếm số ký tự Unicode Math, Hy Lạp và toán tử
+        int mathCharCount = 0;
+        int greekCharCount = 0;
+        int operatorCount = 0;
+        int nonWhitespaceCount = 0;
+
+        foreach (char ch in text)
+        {
+            if (char.IsWhiteSpace(ch)) continue;
+            nonWhitespaceCount++;
+
+            // Ký tự Hy Lạp: U+0370 -> U+03FF
+            if (ch >= '\u0370' && ch <= '\u03FF')
+            {
+                greekCharCount++;
+                mathCharCount++;
+            }
+            // Mathematical Operators: U+2200 -> U+22FF
+            else if (ch >= '\u2200' && ch <= '\u22FF')
+            {
+                operatorCount++;
+                mathCharCount++;
+            }
+            // Letterlike Symbols: U+2100 -> U+214F (ví dụ ℝ, ℂ, ℕ, ℒ)
+            else if (ch >= '\u2100' && ch <= '\u214F')
+            {
+                mathCharCount++;
+            }
+            // Mathematical Arrows: U+2190 -> U+21FF
+            else if (ch >= '\u2190' && ch <= '\u21FF')
+            {
+                operatorCount++;
+                mathCharCount++;
+            }
+            // Superscripts and Subscripts: U+2070 -> U+209F
+            else if (ch >= '\u2070' && ch <= '\u209F')
+            {
+                mathCharCount++;
+            }
+            // Các toán tử toán học chuẩn trong ASCII
+            else if ("=+−*^/±×÷·~≈≠≡≤≥<>|∑∏∫∂∇√∞".Contains(ch))
+            {
+                operatorCount++;
+                mathCharCount++;
+            }
+        }
+
+        if (nonWhitespaceCount == 0) return false;
+
+        float mathDensity = (float)mathCharCount / nonWhitespaceCount;
+
+        // A. Nếu mật độ ký tự toán học >= 22% -> FORMULA_TEXT
+        if (mathDensity >= 0.22f)
+        {
+            return true;
+        }
+
+        // B. Mẫu đánh số công thức ở cuối dòng (ví dụ "(1)", "(2.1)") kèm theo ít nhất 1 toán tử toán học
+        bool endsWithEquationNumber = Regex.IsMatch(text, @"\(\s*\d+(\.\d+)*\s*\)$");
+        if (endsWithEquationNumber && (operatorCount >= 1 || mathCharCount >= 1))
+        {
+            return true;
+        }
+
+        // C. Chứa ít nhất 1 ký tự toán chuyên dụng (Hy Lạp / Tích phân / Tổng / Đạo hàm / Căn) + có quan hệ phép toán
+        bool hasSpecialMathSymbol = greekCharCount > 0 
+            || text.Contains("∑") || text.Contains("∫") || text.Contains("∏") 
+            || text.Contains("∂") || text.Contains("∇") || text.Contains("√") 
+            || text.Contains("∈") || text.Contains("ℝ") || text.Contains("λ")
+            || text.Contains("θ") || text.Contains("α") || text.Contains("β");
+
+        if (hasSpecialMathSymbol)
+        {
+            if (text.Contains('=') || text.Contains('<') || text.Contains('>') || text.Contains('≈') || text.Contains("≤") || text.Contains("≥"))
+            {
+                return true;
+            }
+
+            if (mathDensity >= 0.10f)
+            {
+                return true;
+            }
+        }
+
+        // D. Dạng công thức cấu thành từ nhiều biến đơn lẻ (short tokens)
+        // Ví dụ: "f(x) = w * x + b" hoặc "y = a x^2 + b x + c"
+        var tokens = text.Split(new[] { ' ', '\t', '(', ')', '[', ']', '{', '}' }, StringSplitOptions.RemoveEmptyEntries);
+        if (tokens.Length >= 3 && (text.Contains('=') || text.Contains('+') || text.Contains('-') || text.Contains('^')))
+        {
+            int shortTokens = tokens.Count(t => t.Length <= 2);
+            float shortTokenRatio = (float)shortTokens / tokens.Length;
+            if (shortTokenRatio >= 0.60f && operatorCount >= 1)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Kiểm tra xem tên font có thuộc các bộ Font toán học chuyên dụng (LaTeX, AMS, Math fonts) không
+    /// </summary>
+    public static bool IsMathFont(string? fontName)
+    {
+        if (string.IsNullOrWhiteSpace(fontName)) return false;
+        var lower = fontName.ToLowerInvariant();
+
+        return lower.Contains("cmmi")      // Computer Modern Math Italic
+            || lower.Contains("cmsy")      // Computer Modern Math Symbols
+            || lower.Contains("cmex")      // Computer Modern Math Extension
+            || lower.Contains("msam")      // AMS Math Symbols A
+            || lower.Contains("msbm")      // AMS Math Symbols B
+            || lower.Contains("wasy")      // Wasysym
+            || lower.Contains("eufm")      // Euler Fraktur
+            || lower.Contains("eurm")      // Euler Roman
+            || lower.Contains("eusm")      // Euler Script
+            || lower.Contains("stmary")    // St Mary Road
+            || lower.Contains("math")      // Generic Math fonts (CambriaMath, LatinModernMath, STIXMath, etc.)
+            || lower.Contains("symbol")    // Symbol fonts
+            || lower.Contains("fourier")   // Fourier Math
+            || lower.Contains("txmi")
+            || lower.Contains("pxmi")
+            || lower.Contains("txsy")
+            || lower.Contains("pxsy");
+    }
+
+    /// <summary>
+    /// Listener bắt các sự kiện vẽ chữ và hình ảnh XObject từ engine render của iText7
     /// </summary>
     private class TextBlockExtractionListener : IEventListener
     {
         public List<RawTextChunk> RawChunks { get; } = new();
+        public List<RawImageChunk> RawImages { get; } = new();
 
         public void EventOccurred(IEventData data, EventType type)
         {
@@ -451,7 +661,6 @@ public class PdfExtractorService : IPdfExtractorService
                 var descent = renderInfo.GetDescentLine();
                 float visualHeight = Math.Abs(ascent.GetStartPoint().Get(1) - descent.GetStartPoint().Get(1));
 
-
                 // Nếu font size bị scale bởi Transformation Matrix (Tm) hoặc unscaled (fontSize = 1)
                 if (fontSize <= 2.5f || (visualHeight > fontSize * 1.3f && visualHeight < 100f))
                 {
@@ -463,11 +672,9 @@ public class PdfExtractorService : IPdfExtractorService
                     fontSize = 12f;
                 }
 
-                // VẤN ĐỀ 1: Căn chỉnh trục Y chuẩn theo Baseline
-                // Đáy chữ nằm dưới baseline khoảng 20% font size, chiều cao bao quát 1.15 lần font size
+                // Căn chỉnh trục Y chuẩn theo Baseline
                 float actualBottomY = baselineY - (fontSize * 0.20f);
                 float actualHeight = Math.Max(visualHeight, fontSize * 1.15f);
-
 
                 var font = renderInfo.GetFont();
                 string fontName = "Unknown";
@@ -492,11 +699,45 @@ public class PdfExtractorService : IPdfExtractorService
                     FontSize = fontSize
                 });
             }
+            else if (type == EventType.RENDER_IMAGE && data is ImageRenderInfo imageRenderInfo)
+            {
+                // Bắt sự kiện toán tử Do vẽ Image XObject
+                var ctm = imageRenderInfo.GetImageCtm();
+                if (ctm != null)
+                {
+                    float a = ctm.Get(iText.Kernel.Geom.Matrix.I11);
+                    float b = ctm.Get(iText.Kernel.Geom.Matrix.I12);
+                    float c = ctm.Get(iText.Kernel.Geom.Matrix.I21);
+                    float d = ctm.Get(iText.Kernel.Geom.Matrix.I22);
+                    float e = ctm.Get(iText.Kernel.Geom.Matrix.I31);
+                    float f = ctm.Get(iText.Kernel.Geom.Matrix.I32);
+
+                    float minX = Math.Min(Math.Min(e, e + a), Math.Min(e + c, e + a + c));
+                    float maxX = Math.Max(Math.Max(e, e + a), Math.Max(e + c, e + a + c));
+                    float minY = Math.Min(Math.Min(f, f + b), Math.Min(f + d, f + b + d));
+                    float maxY = Math.Max(Math.Max(f, f + b), Math.Max(f + d, f + b + d));
+
+                    float width = maxX - minX;
+                    float height = maxY - minY;
+
+                    // Lọc bỏ các phần tử quá nhỏ (stencil / mask < 6px)
+                    if (width >= 6f && height >= 6f)
+                    {
+                        RawImages.Add(new RawImageChunk
+                        {
+                            X = minX,
+                            Y = minY,
+                            Width = width,
+                            Height = height
+                        });
+                    }
+                }
+            }
         }
 
         public ICollection<EventType> GetSupportedEvents()
         {
-            return new HashSet<EventType> { EventType.RENDER_TEXT };
+            return new HashSet<EventType> { EventType.RENDER_TEXT, EventType.RENDER_IMAGE };
         }
     }
 
@@ -511,4 +752,13 @@ public class PdfExtractorService : IPdfExtractorService
         public string FontName { get; set; } = string.Empty;
         public float FontSize { get; set; }
     }
+
+    private class RawImageChunk
+    {
+        public float X { get; set; }
+        public float Y { get; set; }
+        public float Width { get; set; }
+        public float Height { get; set; }
+    }
 }
+
